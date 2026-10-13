@@ -7,7 +7,7 @@
 ```
               ┌──────────────────────────────────────────────────────┐
   fontes  ──▶ │  huginn (Rust)   ingest/parse/enrich/correlate       │
- (S1, R7,     │  Redis Streams · CEF / syslog · IOC · regras         │
+ (EDR, SIEM,   │  Redis Streams · CEF / syslog · IOC · regras         │
   syslog,     └───────────────┬──────────────────────────────────────┘
   CEF, webh)                   │ eventos normalizados
                                ▼
@@ -21,7 +21,7 @@
               │  ygg-api (Go)  API gateway                           │
               │  JWT auth · incidentes · playbooks · Postgres        │
               └───────────────┬──────────────────────────────────────┘
-                               │ notificação / Jira / actions
+                               │ notificação / ticketing / actions
 ```
 
 ## Serviços

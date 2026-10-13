@@ -11,7 +11,7 @@ from muninn.models import (
 def make_alert(raw: str, title: str = "alerta") -> AlertNormalized:
     return AlertNormalized(
         alert_id="a1",
-        source="sentinel_one",
+        source="edr",
         title=title,
         severity="high",
         raw=raw,

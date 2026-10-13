@@ -9,7 +9,7 @@ Yggdrasil é uma plataforma **SOAR open source e AI-powered** (Security
 Orchestration, Automation and Response). O objetivo de produto é automatizar a
 **triagem de alertas de segurança** que hoje um SOC (Security Operations Center)
 faz manualmente. Caso de uso de origem: SOC N1 de uma MSSP, triando alertas de
-SentinelOne, Rapid7, Jira e n8n.
+EDR, SIEM, ticketing e automação (conectores agnósticos de vendor).
 
 O que resolve concretamente: ingerir eventos de várias fontes, normalizar/
 enriquecer/correlacionar, e usar agentes de IA para decidir se um alerta é
@@ -74,7 +74,7 @@ linguagem certa da camada, não "tudo em uma só":
 ## Fluxo de dados na borda (visão geral)
 
 ```
-fontes (SentinelOne, Rapid7, syslog, CEF, n8n webhooks)
+fontes (EDR, SIEM, syslog, CEF, webhooks/automação)
       │
       ▼
 huginn (Rust) ──ingest──▶ Redis Streams
@@ -86,7 +86,7 @@ muninn (Python) ── agente de triagem IA (Pydantic AI → LiteLLM → Langfus
       ▼
       decisão de triagem (TP / FP / review)
       ▼
-ygg-api (Go) ── incidente (PostgreSQL) ── playbook ── notificação/jira
+ygg-api (Go) ── incidente (PostgreSQL) ── playbook ── notificação/ticketing
 ```
 
 ## Regras de desenvolvimento (IMPORTANTE — seguir SEMPRE)

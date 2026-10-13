@@ -16,7 +16,7 @@ por código, e observabilidade para auditar e debugar as decisões da IA
 Toda a camada de IA fica no serviço **muninn (Python)** e usa:
 
 - **LiteLLM** como gateway de LLM — acesso uniforme a múltiplos provedores
-  (OpenAI, Anthropic, modelos open, n8n/corporate endpoints) com uma API.
+  (OpenAI, Anthropic, modelos open, corporate/automação endpoints) com uma API.
 - **Pydantic AI** para agentes — agentes tipados, com tools e saídas
   estruturadas (o schema de triagem é um Pydantic model).
 - **Langfuse** para observabilidade — traces das chamadas, audit da decisão,

@@ -20,7 +20,7 @@ class AlertNormalized(BaseModel):
     """Alerta normalizado vindo do pipeline (huginn) — entrada da triagem."""
 
     alert_id: str
-    source: str  # sentinel_one | rapid7 | ...
+    source: str  # edr | siem | ...
     title: str
     severity: str
     raw: str

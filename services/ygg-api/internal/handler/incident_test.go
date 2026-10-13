@@ -18,7 +18,7 @@ func newTestRouter() *IncidentHandlers {
 func TestCreateAndGetIncident(t *testing.T) {
 	h := newTestRouter()
 
-	body := bytes.NewBufferString(`{"title":"Alerta S1","severity":"high","source":"sentinel_one"}`)
+	body := bytes.NewBufferString(`{"title":"Alerta EDR","severity":"high","source":"edr"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/incidents", body)
 	rec := httptest.NewRecorder()
 	h.Route(rec, req)

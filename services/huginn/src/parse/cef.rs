@@ -111,9 +111,9 @@ mod tests {
 
     #[test]
     fn parses_simple_cef() {
-        let line = "CEF:0|Sentinel One|Agent|1.0|20034|Suspicious Activity|7|src=192.168.1.10";
+        let line = "CEF:0|EDR|Agent|1.0|20034|Suspicious Activity|7|src=192.168.1.10";
         let e = parse_cef(line).unwrap();
-        assert_eq!(e.vendor, "Sentinel One");
+        assert_eq!(e.vendor, "EDR");
         assert_eq!(e.product, "Agent");
         assert_eq!(e.signature_id, "20034");
         assert_eq!(e.severity, "7");

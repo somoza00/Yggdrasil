@@ -26,10 +26,10 @@ julgamento — mantendo o analista no controle e a decisão auditável.
 flowchart LR
     subgraph SRC["📡 Fontes"]
         direction LR
-        S1["SentinelOne"]
-        S2["Rapid7"]
-        S3["syslog / CEF"]
-        S4["n8n"]
+        F1["EDR"]
+        F2["SIEM"]
+        F3["syslog / CEF"]
+        F4["Automação"]
     end
 
     HGI["🦅 huginn · Rust<br/>ingest · parsing CEF/syslog<br/>enriquecimento IOC · correlação"]
@@ -38,19 +38,19 @@ flowchart LR
     YGG["⚡ ygg-api · Go<br/>incidente · playbook<br/>auth JWT · notificação"]
     DB[("PostgreSQL")]
 
-    S1 & S2 & S3 & S4 --> HGI
+    F1 & F2 & F3 & F4 --> HGI
     HGI --> REDIS
     REDIS --> MNN
     MNN -->|"decisão: TP · FP · review + rationale"| YGG
     YGG --> DB
-    YGG --> OUT["Jira · n8n"]
+    YGG --> OUT["Ticketing · Automação"]
 
     classDef src  fill:#1e293b,stroke:#94a3b8,color:#e2e8f0
     classDef rust fill:#412a12,stroke:#f59e0b,color:#fde68a
     classDef py   fill:#123a5c,stroke:#38bdf8,color:#bae6fd
     classDef go   fill:#123327,stroke:#34d399,color:#a7f3d0
     classDef db   fill:#2e1065,stroke:#a78bfa,color:#ddd6fe
-    class S1,S2,S3,S4,OUT src
+    class F1,F2,F3,F4,OUT src
     class HGI rust
     class MNN py
     class YGG go
