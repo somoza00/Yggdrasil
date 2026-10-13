@@ -137,11 +137,4 @@ Sessões futuras de IA (e humanos) devem ler o
 ## 📄 Licença
 
 Distribuído sob a **Apache License 2.0**. Veja [`LICENSE`](LICENSE).
-
----
-
-<div align="center">
-  <sub>Idealizado a partir do dia a dia de um SOC N1.<br>Feito para quem quer
-  triar menos e investigar mais. 🔍</sub>
-</div>
 </div>

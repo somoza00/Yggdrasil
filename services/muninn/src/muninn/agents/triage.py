@@ -22,10 +22,10 @@ from muninn.models import AlertNormalized, TriageDecision, classify_heuristic
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = (
-    "Você é um analista SOC N1. Triage um alerta de segurança e responda "
-    "estritamente com o schema pedido: verdict (true_positive | false_positive | "
-    "review), confidence 0..1, rationale e recommended_action. Seja conciso e "
-    "rastreável (cite os indicadores que sustentam a decisão)."
+    "You are a security analyst. Triage a security alert and respond strictly "
+    "with the requested schema: verdict (true_positive | false_positive | "
+    "review), confidence 0..1, rationale and recommended_action. Be concise and "
+    "traceable (cite the indicators supporting the decision)."
 )
 
 def _build_agent(settings: Settings) -> Any:

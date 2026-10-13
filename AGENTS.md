@@ -8,8 +8,9 @@ Leia isto inteiro antes de qualquer modificação.
 Yggdrasil é uma plataforma **SOAR open source e AI-powered** (Security
 Orchestration, Automation and Response). O objetivo de produto é automatizar a
 **triagem de alertas de segurança** que hoje um SOC (Security Operations Center)
-faz manualmente. Caso de uso de origem: SOC N1 de uma MSSP, triando alertas de
-EDR, SIEM, ticketing e automação (conectores agnósticos de vendor).
+faz manualmente. O Yggdrasil é um projeto open source de portfólio e agnóstico
+de vendor: integra fontes via conectores genéricos (EDR, SIEM, ticketing,
+automação) e não cita nenhum produto comercial específico.
 
 O que resolve concretamente: ingerir eventos de várias fontes, normalizar/
 enriquecer/correlacionar, e usar agentes de IA para decidir se um alerta é

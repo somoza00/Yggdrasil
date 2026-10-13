@@ -16,7 +16,7 @@ type Incident struct {
 	ID          string    `json:"id"`
 	Title       string    `json:"title"`
 	Severity    string    `json:"severity"`
-	Source      string    `json:"source"`        // ex: edr, siem
+	Source      string    `json:"source"`        // ex: edr, siem, webhook
 	RawAlertRef string    `json:"raw_alert_ref"` // id do alerta na fonte
 	Verdict     Veredito  `json:"verdict"`
 	Status      string    `json:"status"`

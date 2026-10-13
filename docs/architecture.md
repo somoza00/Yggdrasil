@@ -21,7 +21,7 @@
               │  ygg-api (Go)  API gateway                           │
               │  JWT auth · incidentes · playbooks · Postgres        │
               └───────────────┬──────────────────────────────────────┘
-                               │ notificação / ticketing / actions
+                               │ notification / ticketing / actions
 ```
 
 ## Serviços
