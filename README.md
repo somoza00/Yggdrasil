@@ -22,17 +22,39 @@ No SOC, uma boa parte do tempo vai para **decidir se o alerta é real**. Esse
 julgamento é repetitivo, caro e sujeito a erro. O Yggdrasil coloca a IA nesse
 julgamento — mantendo o analista no controle e a decisão auditável.
 
-```
-fontes (SentinelOne · Rapid7 · syslog · CEF · n8n)
-      │
-      ▼
- 🦅 huginn (Rust)   ingest · parsing CEF/syslog · enriquecimento IOC · correlação
-      │   Redis Streams
-      ▼
- 🐦 muninn (Python) agentes de IA de triagem  (Pydantic AI · LiteLLM · Langfuse)
-      │   decisão: TP / FP / review + rationale
-      ▼
- ⚡ ygg-api (Go)    incidente · playbook · notificação (Jira, n8n…)
+```mermaid
+flowchart LR
+    subgraph SRC["📡 Fontes"]
+        direction LR
+        S1["SentinelOne"]
+        S2["Rapid7"]
+        S3["syslog / CEF"]
+        S4["n8n"]
+    end
+
+    HGI["🦅 huginn · Rust<br/>ingest · parsing CEF/syslog<br/>enriquecimento IOC · correlação"]
+    REDIS[("Redis<br/>(Streams)")]
+    MNN["🐦 muninn · Python<br/>agentes de IA de triagem<br/>Pydantic AI · LiteLLM · Langfuse"]
+    YGG["⚡ ygg-api · Go<br/>incidente · playbook<br/>auth JWT · notificação"]
+    DB[("PostgreSQL")]
+
+    S1 & S2 & S3 & S4 --> HGI
+    HGI --> REDIS
+    REDIS --> MNN
+    MNN -->|"decisão: TP · FP · review + rationale"| YGG
+    YGG --> DB
+    YGG --> OUT["Jira · n8n"]
+
+    classDef src  fill:#1e293b,stroke:#94a3b8,color:#e2e8f0
+    classDef rust fill:#412a12,stroke:#f59e0b,color:#fde68a
+    classDef py   fill:#123a5c,stroke:#38bdf8,color:#bae6fd
+    classDef go   fill:#123327,stroke:#34d399,color:#a7f3d0
+    classDef db   fill:#2e1065,stroke:#a78bfa,color:#ddd6fe
+    class S1,S2,S3,S4,OUT src
+    class HGI rust
+    class MNN py
+    class YGG go
+    class REDIS,DB db
 ```
 
 ## 🛠️ Serviços
