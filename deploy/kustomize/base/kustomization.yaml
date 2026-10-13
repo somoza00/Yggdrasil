@@ -1,0 +1,21 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Base compartilhada dos 3 serviços (recursos em conjunto).
+# Overlays (dev/prod) aplicam patches e nomes/namespaces próprios.
+
+resources:
+  - namespace.yaml
+  - secrets.yaml
+  - ygg-api.yaml
+  - huginn.yaml
+  - muninn.yaml
+
+# Labels comuns a todos os recursos
+commonLabels:
+  app.kubernetes.io/part-of: yggdrasil
+
+configMapGenerator:
+  - name: yggdrasil-config
+    envs:
+      - ../../../.env.example

@@ -1,0 +1,9 @@
+# Dev overlay — namespace dedicado a dev. Uso:
+#   kustomize build deploy/kustomize/overlays/dev | kubectl apply -f -
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+namespace: yggdrasil-dev

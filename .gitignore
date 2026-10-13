@@ -1,0 +1,34 @@
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Env / segredos (NUNCA commitar)
+.env
+.env.local
+*.env.local
+
+# Go
+services/ygg-api/bin/
+services/ygg-api/ygg-api
+
+# Rust
+services/huginn/target/
+
+# Python / uv
+services/muninn/.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Docker / dados locais
+data/
+*.log
+
+# Kustomize build output
+deploy/kustomize/**/rendered/

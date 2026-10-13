@@ -1,0 +1,32 @@
+# Prod overlay — mais réplicas, HPA, ingress TLS. Exemplo de composição.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+namespace: yggdrasil-prod
+
+images:
+  - name: yggdrasil/ygg-api
+    newTag: stable
+  - name: yggdrasil/huginn
+    newTag: stable
+  - name: yggdrasil/muninn
+    newTag: stable
+
+patches:
+  - target:
+      kind: Deployment
+      name: ygg-api
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 3
+  - target:
+      kind: Deployment
+      name: muninn
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 3

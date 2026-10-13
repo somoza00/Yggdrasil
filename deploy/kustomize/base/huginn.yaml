@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: huginn
+  namespace: yggdrasil
+  labels:
+    app: huginn
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: huginn
+  template:
+    metadata:
+      labels:
+        app: huginn
+    spec:
+      containers:
+        - name: huginn
+          image: yggdrasil/huginn:latest
+          envFrom:
+            - configMapRef:
+                name: yggdrasil-config
+          env:
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: yggdrasil-secrets
+                  key: redis_url
+          # Manter somente 1 réplica por consumer-group p/ evitar ACM duplo;
+          # escalar via replicas do HPA é assunto do overlay prod.
