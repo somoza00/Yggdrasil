@@ -20,7 +20,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let consumer = consumer_name();
 
     let client = redis::Client::open(redis_url.as_str())?;
-    let conn = client.get_multiplexed_async_connection().await?;
+    let config =
+        redis::AsyncConnectionConfig::new().set_response_timeout(Some(ingest::RESPONSE_TIMEOUT));
+    let conn = client
+        .get_multiplexed_async_connection_with_config(&config)
+        .await?;
 
     log::info!("huginn consumindo stream={stream} group={group} consumer={consumer}");
     ingest::run(conn, &stream, &group, &consumer).await

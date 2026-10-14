@@ -18,6 +18,14 @@ use std::time::Duration;
 /// Espera após erro de leitura do Redis — evita loop quente se o Redis cair.
 const READ_ERROR_BACKOFF: Duration = Duration::from_secs(1);
 
+/// Quanto o XREADGROUP fica bloqueado no servidor esperando mensagens.
+pub const READ_BLOCK: Duration = Duration::from_secs(5);
+
+/// Timeout de resposta da conexão: precisa exceder o BLOCK. Com o default do
+/// redis-rs (500ms) o cliente desiste antes do servidor responder, e uma
+/// entrega tardia fica presa no PEL sem processamento.
+pub const RESPONSE_TIMEOUT: Duration = Duration::from_secs(7);
+
 /// Evento normalizado saído do pipeline (entrada para a camada de IA).
 #[derive(Debug, Serialize)]
 struct Event {
@@ -36,7 +44,7 @@ fn fields_to_map(entry: &StreamId) -> HashMap<String, String> {
         .map
         .iter()
         .filter_map(|(k, v)| {
-            redis::from_redis_value::<String>(v)
+            redis::from_redis_value_ref::<String>(v)
                 .ok()
                 .map(|s| (k.clone(), s))
         })
@@ -100,7 +108,7 @@ pub async fn run(
 
     let opts = StreamReadOptions::default()
         .group(group, consumer)
-        .block(5000);
+        .block(READ_BLOCK.as_millis() as usize);
     let out_stream = format!("{stream}:normalized");
 
     loop {
