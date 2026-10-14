@@ -45,13 +45,8 @@ def classify_heuristic(alert: AlertNormalized) -> TriageDecision:
     saída estruturada sem depender de rede.
     """
     text = f"{alert.title} {alert.raw}".lower()
-    # Heurística simples: marcadores óbvios de falso positivo.
-    if any(k in text for k in ("false positive", "known good", "whitelisted", "benign")):
-        return TriageDecision(
-            verdict=Verdict.FALSE_POSITIVE,
-            confidence=0.8,
-            rationale="Texto contém marcador explícito de falso positivo.",
-        )
+    # Marcadores maliciosos têm precedência: o raw é controlado pelo atacante,
+    # então um marcador de FP injetado não pode mascarar atividade maliciosa.
     if any(k in text for k in ("exfiltration", "ransomware", "powershell -enc", "cmd.exe /c")):
         return TriageDecision(
             verdict=Verdict.TRUE_POSITIVE,
@@ -59,6 +54,13 @@ def classify_heuristic(alert: AlertNormalized) -> TriageDecision:
             rationale="Marcadores de atividade maliciosa presentes.",
             recommended_action="Escalar ao analista N2 e bloquear indicador.",
         )
+    if any(k in text for k in ("false positive", "known good", "whitelisted", "benign")):
+        return TriageDecision(
+            verdict=Verdict.FALSE_POSITIVE,
+            confidence=0.8,
+            rationale="Texto contém marcador explícito de falso positivo.",
+        )
+    # Sem match: nunca assume FP — encaminha para revisão humana.
     return TriageDecision(
         verdict=Verdict.REVIEW,
         confidence=0.5,

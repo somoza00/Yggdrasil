@@ -3,5 +3,5 @@
 pub mod cef;
 pub mod syslog;
 
-pub use cef::{CefEvent, parse_cef};
-pub use syslog::{SyslogEvent, parse_syslog};
+pub use cef::parse_cef;
+pub use syslog::parse_syslog;
