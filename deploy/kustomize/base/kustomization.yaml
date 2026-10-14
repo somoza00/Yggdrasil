@@ -3,19 +3,24 @@ kind: Kustomization
 
 # Base compartilhada dos 3 serviços (recursos em conjunto).
 # Overlays (dev/prod) aplicam patches e nomes/namespaces próprios.
+#
+# O Secret yggdrasil-secrets NÃO é gerenciado aqui: aplicar a base
+# sobrescreveria segredos reais. Crie-o no namespace do overlay antes do
+# deploy — ver deploy/kustomize/secrets.example.yaml.
 
 resources:
   - namespace.yaml
-  - secrets.yaml
   - ygg-api.yaml
   - huginn.yaml
   - muninn.yaml
 
-# Labels comuns a todos os recursos
-commonLabels:
-  app.kubernetes.io/part-of: yggdrasil
+# Labels comuns a todos os recursos (fora dos selectors, que são imutáveis)
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: yggdrasil
+    includeTemplates: true
 
 configMapGenerator:
   - name: yggdrasil-config
     envs:
-      - ../../../.env.example
+      - config.env

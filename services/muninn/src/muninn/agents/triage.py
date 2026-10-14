@@ -28,6 +28,7 @@ SYSTEM_PROMPT = (
     "traceable (cite the indicators supporting the decision)."
 )
 
+
 def _build_agent(settings: Settings) -> Any:
     """Constrói o agente Pydantic AI. Só é chamado quando o LLM está em uso."""
     from pydantic_ai import Agent  # import lazy

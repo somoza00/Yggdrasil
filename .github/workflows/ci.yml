@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go-check:
+    name: go-check (ygg-api)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/ygg-api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: services/ygg-api/go.mod
+          cache-dependency-path: services/ygg-api/go.mod
+      - name: go vet
+        run: go vet ./...
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::arquivos sem gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - name: go test -race
+        run: go test -race ./...
+
+  rust-check:
+    name: rust-check (huginn)
+    runs-on: ubuntu-latest
+    # Mesma toolchain do Dockerfile. redis 1.x exige Rust >= 1.88.
+    container: rust:1.90
+    defaults:
+      run:
+        working-directory: services/huginn
+    steps:
+      - uses: actions/checkout@v4
+      - name: componentes (rustfmt não vem na imagem)
+        run: rustup component add clippy rustfmt
+      - name: cargo fmt
+        run: cargo fmt --check
+      - name: cargo clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: cargo test
+        run: cargo test --locked
+
+  python-check:
+    name: python-check (muninn)
+    runs-on: ubuntu-latest
+    container: python:3.13-slim
+    defaults:
+      run:
+        working-directory: services/muninn
+    steps:
+      - uses: actions/checkout@v4
+      - name: instalar uv
+        run: pip install --no-cache-dir uv
+      - name: uv sync (travado pelo uv.lock)
+        run: uv sync --frozen --extra dev
+      - name: ruff check
+        run: uv run ruff check .
+      - name: ruff format
+        run: uv run ruff format --check .
+      - name: mypy
+        run: uv run mypy src
+      - name: pytest --cov
+        run: uv run pytest --cov=muninn --cov-report=term-missing
+
+  docker-build:
+    name: docker-build (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [ygg-api, huginn, muninn]
+    steps:
+      - uses: actions/checkout@v4
+      - name: docker build (sem push)
+        run: docker build -t "yggdrasil/${{ matrix.service }}:ci" "services/${{ matrix.service }}"
+
+  kustomize-build:
+    name: kustomize-build (${{ matrix.overlay }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        overlay: [dev, prod]
+    steps:
+      - uses: actions/checkout@v4
+      - name: kustomize build
+        run: |
+          docker run --rm -v "$PWD:/repo:ro" -w /repo \
+            registry.k8s.io/kustomize/kustomize:v5.4.3 \
+            build "deploy/kustomize/overlays/${{ matrix.overlay }}" > rendered.yaml
+          echo "recursos renderizados:"
+          grep -E '^kind:' rendered.yaml | sort | uniq -c
+      - name: nenhum Secret renderizado
+        run: |
+          if grep -q '^kind: Secret' rendered.yaml; then
+            echo "::error::Secret renderizado pelo kustomize — segredos não podem vir da base/overlays"
+            exit 1
+          fi
