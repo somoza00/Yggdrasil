@@ -8,11 +8,15 @@
 use crate::enrich;
 use crate::parse;
 use log::{info, warn};
-use redis::aio::Connection;
-use redis::AsyncCommands;
+use redis::aio::MultiplexedConnection;
+use redis::streams::{StreamId, StreamReadOptions, StreamReadReply};
+use redis::{AsyncCommands, RedisResult};
 use serde::Serialize;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::time::Duration;
+
+/// Espera após erro de leitura do Redis — evita loop quente se o Redis cair.
+const READ_ERROR_BACKOFF: Duration = Duration::from_secs(1);
 
 /// Evento normalizado saído do pipeline (entrada para a camada de IA).
 #[derive(Debug, Serialize)]
@@ -25,14 +29,16 @@ struct Event {
     iocs: Vec<enrich::Ioc>,
 }
 
-/// Converte o stream (custódia `fields`) num mapa de campo->valor.
-fn fields_to_map(fields: &[(String, String)]) -> HashMap<String, String> {
-    fields
+/// Converte os campos de uma entrada do stream num mapa de campo->valor.
+/// Campos cujo valor não é string são ignorados.
+fn fields_to_map(entry: &StreamId) -> HashMap<String, String> {
+    entry
+        .map
         .iter()
         .filter_map(|(k, v)| {
-            let bytes = k.clone().into_bytes();
-            let key = String::from_utf8_lossy(&bytes).to_string();
-            Some((key, v.clone()))
+            redis::from_redis_value::<String>(v)
+                .ok()
+                .map(|s| (k.clone(), s))
         })
         .collect()
 }
@@ -41,11 +47,15 @@ fn fields_to_map(fields: &[(String, String)]) -> HashMap<String, String> {
 fn parse_by_source(source: &str, raw: &str) -> serde_json::Value {
     match source {
         "cef" => match parse::parse_cef(raw) {
-            Ok(e) => serde_json::to_value(e).unwrap_or(serde_json::json!({"kind": "cef", "raw": raw})),
+            Ok(e) => {
+                serde_json::to_value(e).unwrap_or(serde_json::json!({"kind": "cef", "raw": raw}))
+            }
             Err(err) => serde_json::json!({"kind": "cef", "error": err, "raw": raw}),
         },
         source if source.starts_with("syslog") => match parse::parse_syslog(raw) {
-            Ok(e) => serde_json::to_value(e).unwrap_or(serde_json::json!({"kind": "syslog", "raw": raw})),
+            Ok(e) => {
+                serde_json::to_value(e).unwrap_or(serde_json::json!({"kind": "syslog", "raw": raw}))
+            }
             Err(err) => serde_json::json!({"kind": "syslog", "error": err, "raw": raw}),
         },
         _ => serde_json::json!({"kind": "unknown", "raw": raw}),
@@ -54,10 +64,12 @@ fn parse_by_source(source: &str, raw: &str) -> serde_json::Value {
 
 /// Processa um evento do stream. Nunca falha "para fora" — em erro de parsing
 /// produz um evento degradado (não derruba nem venena a fila).
-fn handle_payload(fields: &[(String, String)]) -> Event {
-    let map = fields_to_map(fields);
+fn handle_payload(map: &HashMap<String, String>) -> Event {
     let raw = map.get("raw").cloned().unwrap_or_default();
-    let source = map.get("source").cloned().unwrap_or_else(|| "unknown".into());
+    let source = map
+        .get("source")
+        .cloned()
+        .unwrap_or_else(|| "unknown".into());
     let id = map.get("id").cloned();
     Event {
         id,
@@ -68,42 +80,70 @@ fn handle_payload(fields: &[(String, String)]) -> Event {
     }
 }
 
-/// Loop principal de consumo. Lê o stream em grupo e faz ACK por evento.
-pub async fn run(conn: Arc<Connection>, stream: &str, group: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let mut c = (*conn).clone();
+/// Loop principal de consumo. Lê o stream em grupo e faz ACK por evento,
+/// somente depois que o evento normalizado foi publicado.
+pub async fn run(
+    mut c: MultiplexedConnection,
+    stream: &str,
+    group: &str,
+    consumer: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Cria o grupo (e o stream, via MKSTREAM) se não existir. Sem MKSTREAM o
+    // grupo não é criado num stream inexistente e o XREADGROUP falha sem
+    // bloquear. "BUSYGROUP" = grupo já existe (2ª execução em diante).
+    let created: RedisResult<()> = c.xgroup_create_mkstream(stream, group, "$").await;
+    match created {
+        Ok(()) => info!("grupo criado stream={stream} group={group}"),
+        Err(e) if e.code() == Some("BUSYGROUP") => {}
+        Err(e) => return Err(e.into()),
+    }
 
-    // Cria o grupo se não existir (ignora "BUSYGROUP" gerado na 2ª execução).
-    let _ = c.xgroup_create::<_, _, redis::Value>(stream, group, "$").await;
+    let opts = StreamReadOptions::default()
+        .group(group, consumer)
+        .block(5000);
+    let out_stream = format!("{stream}:normalized");
 
     loop {
-        let entries: Vec<(String, Vec<(String, String)>)> = c
-            .xread_options(
-                &[stream],
-                &[">"],
-                &redis::StreamReadOptions::default()
-                    .group(group, "huginn-worker")
-                    .block(5000),
-            )
-            .await
-            // Redis retorna Value::Nil quando não há mensagem no timeout — OK.
-            .unwrap_or_default();
+        // Timeout do BLOCK sem mensagens chega como resposta vazia (não erro).
+        let reply: StreamReadReply = match c.xread_options(&[stream], &[">"], &opts).await {
+            Ok(reply) => reply,
+            Err(e) => {
+                warn!("falha no XREADGROUP stream={stream}: {e}");
+                tokio::time::sleep(READ_ERROR_BACKOFF).await;
+                continue;
+            }
+        };
 
-        for (entry_id, fields) in entries {
-            let event = handle_payload(&fields);
+        for entry in reply.keys.into_iter().flat_map(|k| k.ids) {
+            let event = handle_payload(&fields_to_map(&entry));
             info!(
                 "evento id={} source={} iocs={}",
-                event.id.as_deref().unwrap_or(&entry_id),
+                event.id.as_deref().unwrap_or(&entry.id),
                 event.source,
                 event.iocs.len()
             );
+            let payload = match serde_json::to_string(&event) {
+                Ok(p) => p,
+                Err(e) => {
+                    warn!("falha ao serializar evento {}: {e}", entry.id);
+                    continue;
+                }
+            };
             // Publica o resultado no stream de saída (consumo da camada de IA).
-            let out_stream = format!("{stream}:normalized");
-            let _: redis::Value = c
-                .xadd(&out_stream, "*", &[("event", serde_json::to_string(&event).unwrap_or_default())])
-                .await
-                .unwrap_or(redis::Value::Nil);
-            // ACK para não reentregar este evento.
-            let _: i64 = c.xack(stream, group, &[entry_id.as_str()]).await.unwrap_or(0);
+            // Em falha NÃO faz ACK: o evento fica no PEL para reprocessamento.
+            let published: RedisResult<String> =
+                c.xadd(&out_stream, "*", &[("event", payload)]).await;
+            if let Err(e) = published {
+                warn!(
+                    "falha no XADD de {} em {out_stream}, sem ACK: {e}",
+                    entry.id
+                );
+                continue;
+            }
+            let acked: RedisResult<i64> = c.xack(stream, group, &[&entry.id]).await;
+            if let Err(e) = acked {
+                warn!("falha no XACK de {}: {e}", entry.id);
+            }
         }
     }
 }

@@ -31,6 +31,14 @@ def test_classify_malicious_marker() -> None:
     assert decision.confidence > 0.5
 
 
+def test_injected_fp_marker_does_not_override_malicious_marker() -> None:
+    # O raw é controlado pelo atacante: um "benign" injetado no log não pode
+    # rebaixar um alerta com marcadores maliciosos para falso positivo.
+    alert = make_alert("powershell -enc AAAA ransomware # benign", title="ps")
+    decision = classify_heuristic(alert)
+    assert decision.verdict == Verdict.TRUE_POSITIVE
+
+
 def test_classify_default_review() -> None:
     alert = make_alert("conteúdo inócuo sem marcadores", title="rotina")
     decision = classify_heuristic(alert)
