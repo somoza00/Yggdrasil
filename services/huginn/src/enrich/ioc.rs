@@ -1,5 +1,5 @@
 //! Enriquecimento de IOCs (Indicators of Compromise): IP, domínio, hash,
-//! e-mail. Detecta/harmoniza indicadores encontrados num evento.
+//! URL, e-mail. Detecta/harmoniza indicadores encontrados num evento.
 
 use std::net::IpAddr;
 
@@ -18,6 +18,7 @@ pub enum IocKind {
     Sha256,
     Sha1,
     Md5,
+    Url,
     Email,
 }
 
@@ -55,6 +56,12 @@ pub fn classify(token: &str) -> Option<Ioc> {
         return Some(Ioc {
             kind,
             value: t.to_lowercase(),
+        });
+    }
+    if looks_like_url(t) {
+        return Some(Ioc {
+            kind: IocKind::Url,
+            value: t.to_string(),
         });
     }
     if looks_like_email(t) {
@@ -95,6 +102,24 @@ fn looks_like_domain(t: &str) -> bool {
     parts
         .iter()
         .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'))
+}
+
+/// URL http(s) cujo host é domínio ou IPv4 (porta opcional). O valor é mantido
+/// como veio: path e query podem ser case-sensitive.
+fn looks_like_url(t: &str) -> bool {
+    let lower = t.to_ascii_lowercase();
+    let Some(rest) = lower
+        .strip_prefix("http://")
+        .or_else(|| lower.strip_prefix("https://"))
+    else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host = match authority.rsplit_once(':') {
+        Some((h, port)) if !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()) => h,
+        _ => authority,
+    };
+    host.parse::<std::net::Ipv4Addr>().is_ok() || looks_like_domain(host)
 }
 
 /// E-mail simples: exatamente um '@', parte local não vazia e domínio válido.
@@ -160,6 +185,20 @@ mod tests {
         assert_eq!(classify("@evil.com"), None);
         assert_eq!(classify("a@b@evil.com"), None);
         assert_eq!(classify("user@localhost"), None);
+    }
+
+    #[test]
+    fn classifies_url() {
+        let ioc = classify("http://c2.evil.net/beacon?id=1").unwrap();
+        assert_eq!(ioc.kind, IocKind::Url);
+        assert_eq!(ioc.value, "http://c2.evil.net/beacon?id=1");
+        assert_eq!(
+            classify("HTTPS://10.0.0.5:8443/x").map(|i| i.kind),
+            Some(IocKind::Url)
+        );
+        assert_eq!(classify("https://"), None);
+        assert_eq!(classify("http://cmd.exe/x"), None);
+        assert_eq!(classify("ftp://evil.net/x"), None);
     }
 
     #[test]

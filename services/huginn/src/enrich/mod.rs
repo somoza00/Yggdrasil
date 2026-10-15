@@ -2,4 +2,4 @@
 
 pub mod ioc;
 
-pub use ioc::{extract_iocs, Ioc};
+pub use ioc::{extract_iocs, IocKind};

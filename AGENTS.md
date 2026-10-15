@@ -45,6 +45,7 @@ arquitetura no código; leia as ADRs.
 | ADR-002 | Protocolo síncrono entre serviços (gRPC vs REST) | **PROPOSTA/EM ABERTO — requer spike** |
 | ADR-003 | Storage: PostgreSQL (estruturado) + Redis (streams/cache) | **ACEITO** |
 | ADR-004 | AI layer: LiteLLM + Pydantic AI + Langfuse | **ACEITO** |
+| ADR-005 | Contrato de eventos assíncrono (Redis Streams) | **ACEITO** |
 
 ### Linguagem por camada (ADR-001)
 

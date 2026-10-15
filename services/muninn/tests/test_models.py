@@ -1,7 +1,10 @@
 """Testes do contrato de triagem (offline — não dependem de LLM nem rede)."""
 
+from uuid import UUID
+
 from muninn.models import (
     AlertNormalized,
+    SeverityHint,
     TriageDecision,
     Verdict,
     classify_heuristic,
@@ -10,11 +13,14 @@ from muninn.models import (
 
 def make_alert(raw: str, title: str = "alerta") -> AlertNormalized:
     return AlertNormalized(
-        alert_id="a1",
+        schema_version="1.0",
+        event_id=UUID("c9621933-88bf-5aac-afc8-9c3348befd2c"),
         source="edr",
         title=title,
-        severity="high",
+        severity_hint=SeverityHint.HIGH,
         raw=raw,
+        parsed={"kind": "unknown"},
+        iocs=[],
     )
 
 
