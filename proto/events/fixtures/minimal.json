@@ -1,0 +1,10 @@
+{
+  "schema_version": "1.0",
+  "event_id": "86008a13-7c4e-55ab-8e24-7dbca0e3deab",
+  "source": "unknown",
+  "title": "heartbeat",
+  "severity_hint": "unknown",
+  "raw": "heartbeat",
+  "parsed": { "kind": "unknown" },
+  "iocs": []
+}

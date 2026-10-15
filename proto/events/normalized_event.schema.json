@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/somoza00/Yggdrasil/proto/events/normalized_event.schema.json",
+  "title": "NormalizedEvent",
+  "description": "Evento normalizado publicado pelo huginn em events:ingest:normalized (ADR-005). Versão 1.x do contrato. Consumidores DEVEM ignorar campos desconhecidos.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "event_id",
+    "source",
+    "title",
+    "severity_hint",
+    "raw",
+    "parsed",
+    "iocs"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": {
+      "description": "Versão MAJOR.MINOR do contrato. Produtores 1.0 emitem \"1.0\"; consumidores 1.x aceitam qualquer \"1.<n>\".",
+      "type": "string",
+      "pattern": "^1\\.(0|[1-9][0-9]*)$",
+      "examples": ["1.0"]
+    },
+    "event_id": {
+      "description": "UUID do evento normalizado, gerado pelo huginn (UUIDv5 determinístico a partir da entrada do stream raw).",
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "source": {
+      "description": "Identificador do conector/formato de origem, como recebido no stream raw (ex.: cef, syslog, edr). \"unknown\" se ausente.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "title": {
+      "description": "Resumo curto e legível do evento, derivado pelo huginn (CEF: Name; syslog: mensagem). Nunca vazio.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "severity_hint": {
+      "description": "Severidade sugerida pela fonte, normalizada. É uma dica, não uma decisão: a triagem define a severidade final.",
+      "type": "string",
+      "enum": ["unknown", "info", "low", "medium", "high", "critical"]
+    },
+    "raw": {
+      "description": "Log original, sem alteração. Conteúdo controlado pela fonte (não confiável).",
+      "type": "string"
+    },
+    "parsed": {
+      "description": "Resultado best-effort do parsing. Forma específica por fonte, sem garantia de estabilidade na 1.x. Sempre contém \"kind\"; em falha de parsing contém \"error\".",
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "type": "string" },
+        "error": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "iocs": {
+      "description": "Indicadores extraídos do raw. Pode ser vazio.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind", "value"],
+        "additionalProperties": true,
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": ["ip", "domain", "hash", "url"]
+          },
+          "value": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}

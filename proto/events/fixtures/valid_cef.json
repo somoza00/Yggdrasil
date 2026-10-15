@@ -1,0 +1,32 @@
+{
+  "schema_version": "1.0",
+  "event_id": "c9621933-88bf-5aac-afc8-9c3348befd2c",
+  "source": "cef",
+  "title": "Beacon to c2.evil.net",
+  "severity_hint": "critical",
+  "raw": "CEF:0|ACME|EDR Agent|2.1|1001|Beacon to c2.evil.net|9|src=10.0.0.5 dst=203.0.113.7 fileHash=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 request=http://c2.evil.net/beacon msg=outbound beacon",
+  "parsed": {
+    "kind": "cef",
+    "version": "0",
+    "vendor": "ACME",
+    "product": "EDR Agent",
+    "product_version": "2.1",
+    "signature_id": "1001",
+    "name": "Beacon to c2.evil.net",
+    "severity": "9",
+    "extension": {
+      "src": "10.0.0.5",
+      "dst": "203.0.113.7",
+      "fileHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "request": "http://c2.evil.net/beacon",
+      "msg": "outbound beacon"
+    }
+  },
+  "iocs": [
+    { "kind": "domain", "value": "c2.evil.net" },
+    { "kind": "ip", "value": "10.0.0.5" },
+    { "kind": "ip", "value": "203.0.113.7" },
+    { "kind": "hash", "value": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" },
+    { "kind": "url", "value": "http://c2.evil.net/beacon" }
+  ]
+}

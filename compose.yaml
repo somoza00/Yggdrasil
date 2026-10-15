@@ -61,7 +61,8 @@ services:
     build: ./services/huginn
     environment:
       REDIS_URL: redis://redis:6379
-      REDIS_STREAM_INGEST: ${REDIS_STREAM_INGEST:-events:ingest}
+      REDIS_STREAM_INGEST: ${REDIS_STREAM_INGEST:-events:ingest:raw}
+      REDIS_STREAM_NORMALIZED: ${REDIS_STREAM_NORMALIZED:-events:ingest:normalized}
       REDIS_CONSUMER_GROUP: ${REDIS_CONSUMER_GROUP:-huginn}
     depends_on:
       redis:

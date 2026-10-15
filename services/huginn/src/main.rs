@@ -15,7 +15,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
 
     let redis_url = env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".into());
-    let stream = env::var("REDIS_STREAM_INGEST").unwrap_or_else(|_| "events:ingest".into());
+    let stream = env::var("REDIS_STREAM_INGEST").unwrap_or_else(|_| "events:ingest:raw".into());
+    let out_stream =
+        env::var("REDIS_STREAM_NORMALIZED").unwrap_or_else(|_| "events:ingest:normalized".into());
     let group = env::var("REDIS_CONSUMER_GROUP").unwrap_or_else(|_| "huginn".into());
     let consumer = consumer_name();
 
@@ -26,8 +28,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .get_multiplexed_async_connection_with_config(&config)
         .await?;
 
-    log::info!("huginn consumindo stream={stream} group={group} consumer={consumer}");
-    ingest::run(conn, &stream, &group, &consumer).await
+    log::info!(
+        "huginn consumindo stream={stream} publicando={out_stream} group={group} consumer={consumer}"
+    );
+    ingest::run(conn, &stream, &out_stream, &group, &consumer).await
 }
 
 /// Nome único do consumer por instância. Um nome fixo faria réplicas

@@ -4,8 +4,13 @@ ygg-api e huginn."""
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Any
+from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+# Contrato de eventos (ADR-005). O muninn aceita qualquer MINOR da major 1.
+SCHEMA_VERSION = "1.0"
 
 
 class Verdict(StrEnum):
@@ -16,16 +21,76 @@ class Verdict(StrEnum):
     REVIEW = "review"
 
 
-class AlertNormalized(BaseModel):
-    """Alerta normalizado vindo do pipeline (huginn) — entrada da triagem."""
+class SeverityHint(StrEnum):
+    """Severidade sugerida pela fonte (ADR-005). Dica, não decisão."""
 
-    alert_id: str
-    source: str  # edr | siem | custom
-    title: str
-    severity: str
+    UNKNOWN = "unknown"
+    INFO = "info"
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+
+class IocKind(StrEnum):
+    """Tipos de IOC do contrato 1.x (ADR-005)."""
+
+    IP = "ip"
+    DOMAIN = "domain"
+    HASH = "hash"
+    URL = "url"
+
+
+class Ioc(BaseModel):
+    """Indicador extraído pelo huginn."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    kind: IocKind
+    value: str = Field(min_length=1)
+
+
+class AlertNormalized(BaseModel):
+    """NormalizedEvent do ADR-005 (huginn → events:ingest:normalized) — entrada
+    da triagem. Schema: proto/events/normalized_event.schema.json.
+
+    Forward-compat: campos desconhecidos são ignorados; valores de enum
+    desconhecidos (adicionados numa MINOR futura) são tolerados — IOC de tipo
+    desconhecido é descartado e severidade desconhecida vira `unknown`.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    schema_version: str = Field(pattern=r"^1\.(0|[1-9][0-9]*)$")
+    event_id: UUID
+    source: str = Field(min_length=1, max_length=64)
+    title: str = Field(min_length=1, max_length=256)
+    severity_hint: SeverityHint
     raw: str
-    iocs: list[str] = Field(default_factory=list)
-    tags: list[str] = Field(default_factory=list)
+    parsed: dict[str, Any]
+    iocs: list[Ioc]
+
+    @field_validator("severity_hint", mode="before")
+    @classmethod
+    def _unknown_severity(cls, v: object) -> object:
+        if isinstance(v, str) and v not in SeverityHint._value2member_map_:
+            return SeverityHint.UNKNOWN
+        return v
+
+    @field_validator("iocs", mode="before")
+    @classmethod
+    def _drop_unknown_ioc_kinds(cls, v: object) -> object:
+        if not isinstance(v, list):
+            return v
+        return [
+            i
+            for i in v
+            if not (
+                isinstance(i, dict)
+                and isinstance(i.get("kind"), str)
+                and i["kind"] not in IocKind._value2member_map_
+            )
+        ]
 
 
 class TriageDecision(BaseModel):

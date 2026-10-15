@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "event_id": "8e84a3e3-9cbb-5eb3-9610-0ad38fb02635",
+  "source": "syslog",
+  "title": "sshd[5021]: Failed password for root from 198.51.100.23 port 22 ssh2",
+  "severity_hint": "medium",
+  "raw": "<36>Oct 11 22:14:15 web-01 sshd[5021]: Failed password for root from 198.51.100.23 port 22 ssh2",
+  "parsed": {
+    "kind": "syslog",
+    "facility": 4,
+    "severity": 4,
+    "timestamp": null,
+    "hostname": "web-01",
+    "message": "sshd[5021]: Failed password for root from 198.51.100.23 port 22 ssh2"
+  },
+  "iocs": [
+    { "kind": "ip", "value": "198.51.100.23" }
+  ]
+}
