@@ -30,7 +30,7 @@ yggdrasil/
 │   ├── huginn/          <- RUST — ingest de eventos (Redis Streams), parsing CEF/syslog, enriquecimento de IOC, correlação
 │   └── muninn/          <- PYTHON — agentes de IA (Pydantic AI), gateway LLM (LiteLLM), observabilidade (Langfuse)
 ├── deploy/kustomize/    <- DUPLO de configuração do deploy (base + overlays)
-├── proto/               <- protos gRPC (definitivos se ADR-002 decidir gRPC)
+├── proto/               <- schemas e fixtures de contrato (ADR-002, ADR-005)
 └── scripts/             <- utilitários de dev/CI
 ```
 
@@ -42,7 +42,7 @@ arquitetura no código; leia as ADRs.
 | ADR | Tema | Status |
 |-----|------|--------|
 | ADR-001 | Linguagem por camada (Go/Rust/Python) | **ACEITO** |
-| ADR-002 | Protocolo síncrono entre serviços (gRPC vs REST) | **PROPOSTA/EM ABERTO — requer spike** |
+| ADR-002 | Protocolo síncrono entre serviços: REST, duas chamadas | **FECHADO** |
 | ADR-003 | Storage: PostgreSQL (estruturado) + Redis (streams/cache) | **ACEITO** |
 | ADR-004 | AI layer: LiteLLM + Pydantic AI + Langfuse | **ACEITO** |
 | ADR-005 | Contrato de eventos assíncrono (Redis Streams) | **ACEITO** |
@@ -140,12 +140,16 @@ make test        # roda testes dos 3 serviços
 
 Cada serviço tem `.env.example` próprio — copie para `.env` (nunca commitar `.env`).
 
-## ADR-002 (EM ABERTO) — resumo p/ contexto
+## ADR-002 (FECHADO) — resumo p/ contexto
 
-Protocolo síncrono entre serviços ainda **não decidido** (gRPC vs REST).
-Enquanto não for definido pelo spike, evitar construir dependências de
-contrato síncronas entre serviços que travem o refactor. Ver
-`docs/adr/ADR-002-*.md` e a proposta de spike em `docs/adr/` / `docs/spikes/`.
+Protocolo síncrono: **REST**, com exatamente duas chamadas:
+
+1. ygg-api → muninn `POST /triage` (re-triagem sob demanda).
+2. muninn → ygg-api `POST /api/v1/incidents` (após a triagem assíncrona;
+   idempotente por `event_id`).
+
+Todo o resto passa pelo Redis Streams (ADR-005). Uma chamada síncrona nova
+exige revisar o ADR-002. Ver `docs/adr/ADR-002-inter-service-protocol.md`.
 
 ## Convenções
 

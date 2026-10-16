@@ -4,7 +4,7 @@ ygg-api e huginn."""
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal, Self
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -93,13 +93,71 @@ class AlertNormalized(BaseModel):
         ]
 
 
-class TriageDecision(BaseModel):
-    """Decisão estruturada da triagem — o que o agente de IA deve produzir."""
+class Category(StrEnum):
+    """Categoria da atividade identificada na triagem."""
+
+    MALWARE = "malware"
+    COMMAND_AND_CONTROL = "command_and_control"
+    CREDENTIAL_ACCESS = "credential_access"
+    EXFILTRATION = "exfiltration"
+    LATERAL_MOVEMENT = "lateral_movement"
+    RECONNAISSANCE = "reconnaissance"
+    POLICY_VIOLATION = "policy_violation"
+    OTHER = "other"
+
+
+# Quem decidiu: o agente LLM ou o classificador determinístico de fallback.
+Engine = Literal["llm", "heuristic"]
+
+# Identificador versionado do classificador heurístico (campo `model`).
+HEURISTIC_MODEL = "heuristic-v1"
+
+
+class TriageAssessment(BaseModel):
+    """Avaliação da triagem — exatamente o que o agente de IA deve produzir."""
 
     verdict: Verdict
     confidence: float = Field(ge=0.0, le=1.0)
+    category: Category
     rationale: str
     recommended_action: str = ""
+
+
+class TriageDecision(TriageAssessment):
+    """Avaliação mais a procedência (engine/model), preenchida pelo muninn e
+    nunca pelo LLM — para auditoria de quem tomou a decisão."""
+
+    engine: Engine
+    model: str = Field(min_length=1)
+
+
+class TriageResult(BaseModel):
+    """Payload do muninn para o ygg-api (POST /api/v1/incidents).
+    Fixture do contrato: proto/triage/fixtures/triage_result.json."""
+
+    event_id: UUID
+    title: str
+    source: str
+    severity: SeverityHint
+    iocs: list[Ioc]
+    verdict: Verdict
+    confidence: float = Field(ge=0.0, le=1.0)
+    category: Category
+    rationale: str
+    recommended_action: str
+    engine: Engine
+    model: str
+
+    @classmethod
+    def from_triage(cls, alert: AlertNormalized, decision: TriageDecision) -> Self:
+        return cls(
+            event_id=alert.event_id,
+            title=alert.title,
+            source=alert.source,
+            severity=alert.severity_hint,
+            iocs=alert.iocs,
+            **decision.model_dump(),
+        )
 
 
 def classify_heuristic(alert: AlertNormalized) -> TriageDecision:
@@ -116,18 +174,27 @@ def classify_heuristic(alert: AlertNormalized) -> TriageDecision:
         return TriageDecision(
             verdict=Verdict.TRUE_POSITIVE,
             confidence=0.85,
+            category=Category.EXFILTRATION if "exfiltration" in text else Category.MALWARE,
             rationale="Marcadores de atividade maliciosa presentes.",
             recommended_action="Escalar ao analista N2 e bloquear indicador.",
+            engine="heuristic",
+            model=HEURISTIC_MODEL,
         )
     if any(k in text for k in ("false positive", "known good", "whitelisted", "benign")):
         return TriageDecision(
             verdict=Verdict.FALSE_POSITIVE,
             confidence=0.8,
+            category=Category.OTHER,
             rationale="Texto contém marcador explícito de falso positivo.",
+            engine="heuristic",
+            model=HEURISTIC_MODEL,
         )
     # Sem match: nunca assume FP — encaminha para revisão humana.
     return TriageDecision(
         verdict=Verdict.REVIEW,
         confidence=0.5,
+        category=Category.OTHER,
         rationale="Sem marcadores fortes; requer revisão humana.",
+        engine="heuristic",
+        model=HEURISTIC_MODEL,
     )

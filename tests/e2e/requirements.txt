@@ -1,0 +1,3 @@
+# Dependências do e2e (container one-shot do compose ou venv no host).
+pytest==9.1.1
+redis==8.1.0

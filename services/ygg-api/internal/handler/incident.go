@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/somoza00/yggdrasil/services/ygg-api/internal/model"
 	"github.com/somoza00/yggdrasil/services/ygg-api/internal/store"
@@ -20,14 +21,40 @@ func NewIncidentHandlers(s store.Store) *IncidentHandlers {
 	return &IncidentHandlers{store: s}
 }
 
-func (h *IncidentHandlers) writeJSON(w http.ResponseWriter, code int, v any) {
+// maxBodyBytes limita o body das requisições (proteção contra payloads enormes).
+const maxBodyBytes = 1 << 20
+
+func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+func writeErr(w http.ResponseWriter, code int, msg string) {
+	writeJSON(w, code, map[string]string{"error": msg})
+}
+
+func (h *IncidentHandlers) writeJSON(w http.ResponseWriter, code int, v any) { writeJSON(w, code, v) }
+
 func (h *IncidentHandlers) writeErr(w http.ResponseWriter, code int, msg string) {
-	h.writeJSON(w, code, map[string]string{"error": msg})
+	writeErr(w, code, msg)
+}
+
+// decodeBody lê JSON com limite de tamanho. Campos desconhecidos são
+// ignorados (compatibilidade com versões futuras do muninn). Em erro já
+// responde e devolve false.
+func (h *IncidentHandlers) decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
+	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes)).Decode(v)
+	var tooLarge *http.MaxBytesError
+	switch {
+	case errors.As(err, &tooLarge):
+		h.writeErr(w, http.StatusRequestEntityTooLarge, "body grande demais")
+		return false
+	case err != nil:
+		h.writeErr(w, http.StatusBadRequest, "body JSON inválido")
+		return false
+	}
+	return true
 }
 
 // List responde GET /api/v1/incidents.
@@ -40,26 +67,28 @@ func (h *IncidentHandlers) List(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusOK, items)
 }
 
-// Create responde POST /api/v1/incidents.
+// Create responde POST /api/v1/incidents com um TriageResult do muninn.
+// Idempotente por event_id: reenvio devolve 200 com o incidente existente.
+// id, status e created_at são sempre definidos pelo servidor.
 func (h *IncidentHandlers) Create(w http.ResponseWriter, r *http.Request) {
-	var in model.Incident
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		h.writeErr(w, http.StatusBadRequest, "body JSON inválido")
+	var in model.TriageResult
+	if !h.decodeBody(w, r, &in) {
 		return
 	}
-	if in.Title == "" {
-		h.writeErr(w, http.StatusBadRequest, "campo 'title' obrigatório")
+	if err := in.Validate(); err != nil {
+		h.writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if in.Verdict == "" {
-		in.Verdict = model.VereditoReview
-	}
-	created, err := h.store.Create(r.Context(), &in)
+	it, created, err := h.store.Create(r.Context(), in.Incident(time.Now().UTC()))
 	if err != nil {
 		h.writeErr(w, http.StatusInternalServerError, "falha ao criar incidente")
 		return
 	}
-	h.writeJSON(w, http.StatusCreated, created)
+	code := http.StatusCreated
+	if !created {
+		code = http.StatusOK
+	}
+	h.writeJSON(w, code, it)
 }
 
 // Route enruta o handler conforme método, num padrão simples estilo mux.
@@ -114,8 +143,11 @@ func (h *IncidentHandlers) PatchVerdict(w http.ResponseWriter, r *http.Request) 
 	var body struct {
 		Verdict model.Veredito `json:"verdict"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		h.writeErr(w, http.StatusBadRequest, "body JSON inválido")
+	if !h.decodeBody(w, r, &body) {
+		return
+	}
+	if !body.Verdict.Valid() {
+		h.writeErr(w, http.StatusBadRequest, "verdict inválido")
 		return
 	}
 	it, err := h.store.UpdateVerdict(r.Context(), idFromPath(r.URL.Path), body.Verdict)

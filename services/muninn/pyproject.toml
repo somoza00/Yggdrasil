@@ -10,7 +10,10 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
-    "pydantic-ai>=0.0.20",
+    # slim + openai: o LiteLLM proxy fala a API OpenAI. <2.31 (0.8.x) importava
+    # opentelemetry._events, ausente no opentelemetry-api resolvido.
+    "pydantic-ai-slim[openai]>=2.31",
+    "httpx>=0.28",
     "litellm>=1.40",
     "langfuse>=2.40",
     "redis>=5.0",

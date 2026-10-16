@@ -3,7 +3,9 @@
 from uuid import UUID
 
 from muninn.models import (
+    HEURISTIC_MODEL,
     AlertNormalized,
+    Category,
     SeverityHint,
     TriageDecision,
     Verdict,
@@ -35,6 +37,19 @@ def test_classify_malicious_marker() -> None:
     decision = classify_heuristic(alert)
     assert decision.verdict == Verdict.TRUE_POSITIVE
     assert decision.confidence > 0.5
+    assert decision.category == Category.EXFILTRATION
+
+
+def test_classify_malware_category() -> None:
+    decision = classify_heuristic(make_alert("ransomware note dropped", title="fs"))
+    assert decision.category == Category.MALWARE
+
+
+def test_heuristic_decision_is_labeled_as_heuristic() -> None:
+    decision = classify_heuristic(make_alert("x"))
+    assert decision.engine == "heuristic"
+    assert decision.model == HEURISTIC_MODEL
+    assert decision.category == Category.OTHER
 
 
 def test_injected_fp_marker_does_not_override_malicious_marker() -> None:
