@@ -1,17 +1,67 @@
-"""Aplicação FastAPI do muninn. Expõe o endpoint síncrono de triagem.
+"""Aplicação FastAPI do muninn.
 
-A decisão sobre gRPC vs REST vem do ADR-002; por enquanto expõe REST para
-viabilizar a chamada síncrona — se o spike decidir gRPC, este contrato muda.
+- POST /triage: chamada síncrona do ygg-api (REST, ADR-002).
+- Worker em background: consome events:ingest:normalized (ADR-005), tria via
+  LLM e cria o incidente no ygg-api. Desligável com MUNNIN_WORKER_ENABLED=false.
 """
 
 from __future__ import annotations
 
+import asyncio
+import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager, suppress
+
 from fastapi import FastAPI
 
 from muninn.agents import triage_sync
+from muninn.config.settings import get_settings
 from muninn.models import AlertNormalized, TriageDecision
+from muninn.worker import TriageWorker
 
-app = FastAPI(title="muninn", version="0.1.0")
+logger = logging.getLogger(__name__)
+
+# Tempo para o worker terminar o evento corrente no shutdown.
+SHUTDOWN_GRACE_SECONDS = 10
+
+
+def configure_logging(level: str) -> None:
+    """Logs do pacote muninn no stderr. O uvicorn só configura os loggers dele;
+    sem isto, INFO do worker (evento triado, engine usada) não aparece."""
+    logger = logging.getLogger("muninn")
+    logger.setLevel(level.upper())
+    if not logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        logger.addHandler(handler)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    settings = get_settings()
+    configure_logging(settings.log_level)
+    if not settings.worker_enabled:
+        yield
+        return
+    worker = TriageWorker.from_settings(settings)
+    stop = asyncio.Event()
+    task = asyncio.create_task(worker.run(stop), name="triage-worker")
+    try:
+        yield
+    finally:
+        stop.set()
+        try:
+            await asyncio.wait_for(task, timeout=SHUTDOWN_GRACE_SECONDS)
+        except TimeoutError:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+        except Exception:
+            logger.exception("worker terminou com erro")
+        await worker.aclose()
+
+
+app = FastAPI(title="muninn", version="0.1.0", lifespan=lifespan)
 
 
 @app.post("/triage", response_model=TriageDecision)

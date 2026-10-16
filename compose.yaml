@@ -1,6 +1,12 @@
 name: yggdrasil
 
 # Ambiente de desenvolvimento local. Produção usa deploy/kustomize (K8s).
+#
+#   docker compose up --build        stack: redis, postgres, ygg-api, huginn, muninn
+#   make e2e                         + container one-shot que valida o fluxo
+#   --profile observability          + langfuse
+#
+# Sem LITELLM_BASE_URL o muninn tria só com a heurística (engine=heuristic).
 services:
   postgres:
     image: postgres:17-alpine
@@ -29,6 +35,7 @@ services:
   # Langfuse (observabilidade da IA) — corrija creds em produção
   langfuse:
     image: langfuse/langfuse:2
+    profiles: ["observability"]
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-ygg}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/langfuse
       NEXTAUTH_URL: http://localhost:4000
@@ -64,24 +71,50 @@ services:
       REDIS_STREAM_INGEST: ${REDIS_STREAM_INGEST:-events:ingest:raw}
       REDIS_STREAM_NORMALIZED: ${REDIS_STREAM_NORMALIZED:-events:ingest:normalized}
       REDIS_CONSUMER_GROUP: ${REDIS_CONSUMER_GROUP:-huginn}
+      RUST_LOG: ${RUST_LOG:-info}
     depends_on:
       redis:
         condition: service_started
 
+  # O muninn só lê variáveis com prefixo MUNNIN_ (pydantic-settings).
   muninn:
     build: ./services/muninn
     environment:
       MUNNIN_PORT: "8090"
-      LITELLM_BASE_URL: ${LITELLM_BASE_URL:-http://litellm:4000}
-      LITELLM_API_KEY: ${LITELLM_API_KEY:-sk-local}
-      LANGFUSE_HOST: http://langfuse:3000
-      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
-      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
-      YGG_API_URL: http://ygg-api:8080
+      MUNNIN_REDIS_URL: redis://redis:6379
+      MUNNIN_REDIS_STREAM_NORMALIZED: ${REDIS_STREAM_NORMALIZED:-events:ingest:normalized}
+      MUNNIN_YGG_API_URL: http://ygg-api:8080
+      # Vazio = LLM desligado. Aponte para um LiteLLM proxy para usar o agente.
+      MUNNIN_LITELLM_BASE_URL: ${LITELLM_BASE_URL:-}
+      MUNNIN_LITELLM_API_KEY: ${LITELLM_API_KEY:-}
+      MUNNIN_MODEL: ${MUNNIN_MODEL:-gpt-4o-mini}
+      MUNNIN_LANGFUSE_HOST: http://langfuse:3000
+      MUNNIN_LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      MUNNIN_LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
     ports:
       - "8090:8090"
     depends_on:
-      - langfuse
+      redis:
+        condition: service_started
+      ygg-api:
+        condition: service_started
+
+  # One-shot: publica um CEF em events:ingest:raw e espera o incidente no
+  # ygg-api. Uso: make e2e (ou docker compose --profile e2e run --rm e2e).
+  e2e:
+    build: ./tests/e2e
+    profiles: ["e2e"]
+    environment:
+      E2E_REDIS_URL: redis://redis:6379
+      E2E_YGG_API_URL: http://ygg-api:8080
+      E2E_RAW_STREAM: ${REDIS_STREAM_INGEST:-events:ingest:raw}
+      E2E_NORMALIZED_STREAM: ${REDIS_STREAM_NORMALIZED:-events:ingest:normalized}
+      E2E_HUGINN_GROUP: ${REDIS_CONSUMER_GROUP:-huginn}
+    depends_on:
+      - redis
+      - ygg-api
+      - huginn
+      - muninn
 
 volumes:
   pgdata:
