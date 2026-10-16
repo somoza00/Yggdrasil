@@ -12,7 +12,7 @@ import pytest
 from jsonschema import Draft202012Validator
 from pydantic import ValidationError
 
-from muninn.models import AlertNormalized, IocKind, SeverityHint
+from muninn.models import AlertNormalized, IocKind, SeverityHint, TriageResult
 
 EVENTS_DIR = Path(__file__).resolve().parents[3] / "proto" / "events"
 SCHEMA: dict[str, Any] = json.loads((EVENTS_DIR / "normalized_event.schema.json").read_text())
@@ -123,3 +123,10 @@ def test_missing_required_field_is_rejected(field: str) -> None:
     del data[field]
     with pytest.raises(ValidationError):
         AlertNormalized.model_validate(data)
+
+
+def test_triage_result_fixture_matches_model() -> None:
+    # Mesma fixture que o ygg-api usa no teste do POST /api/v1/incidents.
+    path = EVENTS_DIR.parent / "triage" / "fixtures" / "triage_result.json"
+    data = load(path)
+    assert TriageResult.model_validate(data).model_dump(mode="json") == data

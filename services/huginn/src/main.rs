@@ -3,6 +3,7 @@
 //! CEF/syslog, enriquece IOCs e correlaciona. Saída publicada de volta
 //! ao stream para a camada de IA (muninn).
 
+mod correlate;
 mod enrich;
 mod ingest;
 mod parse;

@@ -10,6 +10,7 @@
 //! Saída (`events:ingest:normalized`): campo `event` com o JSON do
 //! `NormalizedEvent` (schema em `proto/events/normalized_event.schema.json`).
 
+use crate::correlate;
 use crate::enrich::{self, IocKind};
 use crate::parse;
 use log::{info, warn};
@@ -21,8 +22,9 @@ use std::collections::HashMap;
 use std::time::Duration;
 use uuid::Uuid;
 
-/// Espera após erro de leitura do Redis — evita loop quente se o Redis cair.
-const READ_ERROR_BACKOFF: Duration = Duration::from_secs(1);
+/// Backoff exponencial em erros do Redis: começa em 100ms, dobra, teto 30s.
+const BACKOFF_START: Duration = Duration::from_millis(100);
+const BACKOFF_MAX: Duration = Duration::from_secs(30);
 
 /// Quanto o XREADGROUP fica bloqueado no servidor esperando mensagens.
 pub const READ_BLOCK: Duration = Duration::from_secs(5);
@@ -45,7 +47,7 @@ const SOURCE_MAX_CHARS: usize = 64;
 
 /// Evento normalizado saído do pipeline (entrada para a camada de IA).
 #[derive(Debug, Serialize)]
-struct NormalizedEvent {
+pub(crate) struct NormalizedEvent {
     schema_version: &'static str,
     /// Determinístico por entrada do stream raw: reentrega => mesmo id.
     event_id: Uuid,
@@ -55,7 +57,7 @@ struct NormalizedEvent {
     raw: String,
     /// Resultado best-effort do parsing; sempre contém `kind`.
     parsed: serde_json::Value,
-    iocs: Vec<EventIoc>,
+    pub(crate) iocs: Vec<EventIoc>,
 }
 
 /// Severidade sugerida pela fonte, normalizada. A triagem decide a final.
@@ -72,9 +74,9 @@ enum SeverityHint {
 
 /// Tipos de IOC do contrato 1.x. Mais grossos que `IocKind`: o detalhe
 /// (IPv4/IPv6, SHA-256/MD5) é derivável do valor.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "lowercase")]
-enum ContractIocKind {
+pub(crate) enum ContractIocKind {
     Ip,
     Domain,
     Hash,
@@ -95,9 +97,32 @@ impl ContractIocKind {
 }
 
 #[derive(Debug, Serialize)]
-struct EventIoc {
-    kind: ContractIocKind,
-    value: String,
+pub(crate) struct EventIoc {
+    pub(crate) kind: ContractIocKind,
+    pub(crate) value: String,
+}
+
+/// Backoff exponencial com teto. `reset` após uma operação bem-sucedida.
+struct Backoff {
+    next: Duration,
+}
+
+impl Backoff {
+    fn new() -> Self {
+        Self {
+            next: BACKOFF_START,
+        }
+    }
+
+    fn next_delay(&mut self) -> Duration {
+        let delay = self.next;
+        self.next = (self.next * 2).min(BACKOFF_MAX);
+        delay
+    }
+
+    fn reset(&mut self) {
+        self.next = BACKOFF_START;
+    }
 }
 
 /// Resultado do parsing por fonte: o objeto `parsed` e o que dele se deriva.
@@ -212,7 +237,11 @@ fn parse_by_source(source: &str, raw: &str) -> ParseOutcome {
 ///
 /// `event_id` = UUIDv5(`<stream>/<entry_id>`): a reentrega da mesma entrada
 /// (ex.: XADD ok mas XACK falhou) republica com o mesmo id.
-fn handle_payload(map: &HashMap<String, String>, stream: &str, entry_id: &str) -> NormalizedEvent {
+pub(crate) fn handle_payload(
+    map: &HashMap<String, String>,
+    stream: &str,
+    entry_id: &str,
+) -> NormalizedEvent {
     let raw = map.get("raw").cloned().unwrap_or_default();
     let source = map
         .get("source")
@@ -244,8 +273,27 @@ fn handle_payload(map: &HashMap<String, String>, stream: &str, entry_id: &str) -
     }
 }
 
+/// Cria o grupo (e o stream, via MKSTREAM) se não existir. Sem MKSTREAM o
+/// grupo não é criado num stream inexistente e o XREADGROUP falha sem
+/// bloquear. "BUSYGROUP" = grupo já existe (2ª execução em diante).
+async fn ensure_group(c: &mut MultiplexedConnection, stream: &str, group: &str) -> RedisResult<()> {
+    let created: RedisResult<()> = c.xgroup_create_mkstream(stream, group, "$").await;
+    match created {
+        Ok(()) => {
+            info!("grupo criado stream={stream} group={group}");
+            Ok(())
+        }
+        Err(e) if e.code() == Some("BUSYGROUP") => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
 /// Loop principal de consumo. Lê o stream em grupo e faz ACK por evento,
 /// somente depois que o evento normalizado foi publicado.
+///
+/// Começa relendo o próprio PEL (id `0`: entregues a este consumer e sem ACK)
+/// e só então passa a mensagens novas (`>`). Uma falha de XADD volta ao PEL,
+/// senão o evento sem ACK nunca seria reprocessado.
 pub async fn run(
     mut c: MultiplexedConnection,
     stream: &str,
@@ -253,34 +301,47 @@ pub async fn run(
     group: &str,
     consumer: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Cria o grupo (e o stream, via MKSTREAM) se não existir. Sem MKSTREAM o
-    // grupo não é criado num stream inexistente e o XREADGROUP falha sem
-    // bloquear. "BUSYGROUP" = grupo já existe (2ª execução em diante).
-    let created: RedisResult<()> = c.xgroup_create_mkstream(stream, group, "$").await;
-    match created {
-        Ok(()) => info!("grupo criado stream={stream} group={group}"),
-        Err(e) if e.code() == Some("BUSYGROUP") => {}
-        Err(e) => return Err(e.into()),
-    }
+    ensure_group(&mut c, stream, group).await?;
 
     let opts = StreamReadOptions::default()
         .group(group, consumer)
         .block(READ_BLOCK.as_millis() as usize);
+    // Backoffs independentes: o de leitura zera a cada XREADGROUP ok; o de
+    // publicação só zera após um XADD ok. Com um só, a leitura bem-sucedida
+    // zeraria a espera e um XADD com falha seria repetido a cada 100ms.
+    let mut read_backoff = Backoff::new();
+    let mut publish_backoff = Backoff::new();
+    let mut read_id = "0";
 
     loop {
         // Timeout do BLOCK sem mensagens chega como resposta vazia (não erro).
-        let reply: StreamReadReply = match c.xread_options(&[stream], &[">"], &opts).await {
+        let reply: StreamReadReply = match c.xread_options(&[stream], &[read_id], &opts).await {
             Ok(reply) => reply,
             Err(e) => {
-                warn!("falha no XREADGROUP stream={stream}: {e}");
-                tokio::time::sleep(READ_ERROR_BACKOFF).await;
+                if e.code() == Some("NOGROUP") {
+                    // Redis perdeu os dados (restart sem persistência, FLUSHALL).
+                    if let Err(e) = ensure_group(&mut c, stream, group).await {
+                        warn!("falha ao recriar grupo {group}: {e}");
+                    }
+                }
+                let delay = read_backoff.next_delay();
+                warn!("falha no XREADGROUP stream={stream}, nova tentativa em {delay:?}: {e}");
+                tokio::time::sleep(delay).await;
                 continue;
             }
         };
+        read_backoff.reset();
 
-        for entry in reply.keys.into_iter().flat_map(|k| k.ids) {
+        let entries: Vec<StreamId> = reply.keys.into_iter().flat_map(|k| k.ids).collect();
+        if read_id == "0" && entries.is_empty() {
+            read_id = ">"; // PEL vazio: segue para mensagens novas
+            continue;
+        }
+
+        for entry in entries {
             let map = fields_to_map(&entry);
-            let event = handle_payload(&map, stream, &entry.id);
+            let mut event = handle_payload(&map, stream, &entry.id);
+            correlate::correlate(&mut event);
             info!(
                 "evento event_id={} entry={} source_id={} source={} severity={:?} iocs={}",
                 event.event_id,
@@ -302,15 +363,22 @@ pub async fn run(
             let published: RedisResult<String> =
                 c.xadd(out_stream, "*", &[("event", payload)]).await;
             if let Err(e) = published {
+                let delay = publish_backoff.next_delay();
                 warn!(
-                    "falha no XADD de {} em {out_stream}, sem ACK: {e}",
+                    "falha no XADD de {} em {out_stream}, sem ACK; relendo o PEL em {delay:?}: {e}",
                     entry.id
                 );
-                continue;
+                read_id = "0";
+                tokio::time::sleep(delay).await;
+                break;
             }
+            publish_backoff.reset();
             let acked: RedisResult<i64> = c.xack(stream, group, &[&entry.id]).await;
             if let Err(e) = acked {
+                // Fica no PEL: será republicado com o mesmo event_id (os
+                // consumidores deduplicam).
                 warn!("falha no XACK de {}: {e}", entry.id);
+                read_id = "0";
             }
         }
     }
@@ -511,5 +579,29 @@ mod tests {
         let event = handle_payload(&map, RAW_STREAM, "1-0");
         assert_eq!(event.iocs.len(), 1);
         assert_eq!(event.iocs[0].kind, ContractIocKind::Ip);
+    }
+}
+
+#[cfg(test)]
+mod backoff_tests {
+    use super::*;
+
+    #[test]
+    fn backoff_doubles_from_100ms_up_to_30s() {
+        let mut b = Backoff::new();
+        let got: Vec<u128> = (0..12).map(|_| b.next_delay().as_millis()).collect();
+        assert_eq!(
+            got,
+            vec![100, 200, 400, 800, 1600, 3200, 6400, 12800, 25600, 30000, 30000, 30000]
+        );
+    }
+
+    #[test]
+    fn backoff_resets_after_success() {
+        let mut b = Backoff::new();
+        b.next_delay();
+        b.next_delay();
+        b.reset();
+        assert_eq!(b.next_delay(), Duration::from_millis(100));
     }
 }

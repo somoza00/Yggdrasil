@@ -195,8 +195,8 @@ emite todos, e o consumidor nunca precisa tratar ausência.
 
 ## Pendências (fora deste ADR)
 
-- O consumidor do muninn em `events:ingest:normalized` (group `muninn`) ainda
-  não existe. Hoje o muninn só expõe `POST /triage`.
+- ~~Consumidor do muninn em `events:ingest:normalized`~~: implementado no
+  `muninn/worker.py` (group `muninn`).
 - `source_event_id` (o `id` da fonte) como campo opcional na 1.1, para
   rastreabilidade até o evento original.
 - Retenção dos streams (`MAXLEN`/`MINID`), dead-letter stream para eventos

@@ -17,6 +17,7 @@ help:
 	@echo "  make ygg-api-test   testes Go"
 	@echo "  make huginn-test    testes Rust"
 	@echo "  make muninn-test    testes Python (pytest --cov)"
+	@echo "  make e2e            sobe a stack e roda o e2e (CEF -> incidente)"
 	@echo "  make fmt            gofmt + cargo fmt + ruff format"
 	@echo "  make lint           go vet + cargo clippy + ruff check"
 	@echo "  make proto-gen      regenera stubs de proto (quando ADR-002 decidir)"
@@ -33,6 +34,12 @@ dev-down:
 .PHONY: dev-logs
 dev-logs:
 	docker compose logs -f
+
+# Container one-shot: CEF em events:ingest:raw -> incidente no ygg-api.
+.PHONY: e2e
+e2e:
+	docker compose --profile e2e build
+	docker compose --profile e2e run --rm e2e
 
 # ── Gate de qualidade por serviço ────────────────────────────
 .PHONY: ygg-api-test

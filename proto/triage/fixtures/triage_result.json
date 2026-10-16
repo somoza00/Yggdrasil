@@ -1,0 +1,18 @@
+{
+  "event_id": "c9621933-88bf-5aac-afc8-9c3348befd2c",
+  "title": "Beacon to c2.evil.net",
+  "source": "cef",
+  "severity": "critical",
+  "iocs": [
+    { "kind": "domain", "value": "c2.evil.net" },
+    { "kind": "ip", "value": "10.0.0.5" },
+    { "kind": "url", "value": "http://c2.evil.net/beacon" }
+  ],
+  "verdict": "true_positive",
+  "confidence": 0.9,
+  "category": "command_and_control",
+  "rationale": "Outbound beacon to a known C2 domain from an internal host.",
+  "recommended_action": "Isolate 10.0.0.5 and block c2.evil.net.",
+  "engine": "llm",
+  "model": "gpt-4o-mini"
+}
