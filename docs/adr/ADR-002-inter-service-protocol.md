@@ -1,10 +1,8 @@
 # ADR-002 — Protocolo síncrono entre serviços (gRPC vs REST)
 
-- **Status:** PROPOSTA / EM ABERTO — **requer spike** `.spike-pending`
-- **Data:** 2026-10-13 (rascunho inicial)
-
-> ⚠️ DECISÃO NÃO TOMADA. Enquanto este spike não rodar, não criar dependências
-> síncronas de contrato entre serviços que travem decisão futura.
+- **Status:** FECHADO — **REST**, duas chamadas síncronas
+- **Data:** 2026-10-13 (rascunho inicial) · 2026-10-16 (decisão)
+- **Relacionados:** ADR-005 (contrato assíncrono via Redis Streams)
 
 ## Contexto
 
@@ -47,10 +45,36 @@ latência e saída estruturada.
 4. Suporte a tooling de observabilidade (trace IDs atravessando).
 5. Riscos de dependency hell em Python (grpcio vs fastapi/clients).
 
-## Decisão (a ser preenchida APÓS o spike)
+## Decisão
 
-> **DECISÃO:** [pendente]
+**REST (HTTP + JSON).** O spike gRPC vs REST não foi executado: a decisão foi
+tomada antes dele, porque o volume síncrono é baixo e o fluxo principal já é
+assíncrono (ADR-005). Existem **exatamente duas** chamadas síncronas:
+
+| # | Chamada | Quando | Contrato |
+|---|---|---|---|
+| 1 | ygg-api → muninn `POST /triage` | Re-triagem sob demanda (exposta pelo ygg-api em `POST /api/v1/triage`) | Corpo: `NormalizedEvent` (ADR-005). Resposta: `TriageDecision` |
+| 2 | muninn → ygg-api `POST /api/v1/incidents` | Depois da triagem assíncrona de cada evento do stream `events:ingest:normalized` | Corpo: `TriageResult`, fixture em `proto/triage/fixtures/triage_result.json`. Idempotente por `event_id` (201 cria, 200 já existia) |
+
+As demais interações do Contexto não são síncronas:
+
+- huginn → muninn passa pelo Redis Streams (ADR-005), não por chamada direta.
+- ygg-api → huginn (consulta de estado) não existe. Se for necessária, exige
+  revisar este ADR.
+
+Regras para as duas chamadas:
+
+- Os consumidores ignoram campos desconhecidos (mesma regra do ADR-005).
+- Timeouts explícitos: o cliente muninn no ygg-api usa 60 s (cobre o LLM); o
+  cliente ygg-api no muninn usa `MUNNIN_YGG_API_TIMEOUT_SECONDS` (10 s).
+- Na chamada 2, um 5xx, 429 ou erro de rede mantém o evento pendente no stream
+  para nova tentativa. Um 4xx descarta o evento com log de erro.
 
 ## Consequências
 
-> [pendente — dependerá da escolha]
+- Debug com `curl` e o OpenAPI gerado pelo FastAPI no muninn. Não há codegen
+  nem `.proto`: `proto/` guarda só os schemas e fixtures de contrato.
+- O contrato da chamada 2 é verificado pela fixture compartilhada nos testes do
+  muninn e do ygg-api. Ainda falta uma spec OpenAPI do ygg-api.
+- Pendente: autenticação serviço a serviço. Hoje as duas rotas aceitam
+  qualquer chamada que chegue pela rede.
