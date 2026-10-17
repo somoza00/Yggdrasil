@@ -23,7 +23,13 @@ help:
 	@echo "  make proto-gen      regenera stubs de proto (quando ADR-002 decidir)"
 
 # ── Dev local ────────────────────────────────────────────────
+# Tokens JWT de serviço assinados com o JWT_SECRET de dev do compose
+# (ygg-api com ENV=development). Esse segredo nunca vale fora do ambiente local.
+JWT_SECRET ?= dev-jwt-secret
+ygg-token = $(shell cd services/ygg-api && JWT_SECRET='$(JWT_SECRET)' go run ./cmd/ygg-token -sub $(1) -ttl 720h)
+
 .PHONY: dev-up
+dev-up: export YGG_API_SERVICE_TOKEN ?= $(call ygg-token,muninn)
 dev-up:
 	docker compose up -d --build
 
@@ -37,6 +43,8 @@ dev-logs:
 
 # Container one-shot: CEF em events:ingest:raw -> incidente no ygg-api.
 .PHONY: e2e
+e2e: export YGG_API_SERVICE_TOKEN ?= $(call ygg-token,muninn)
+e2e: export E2E_YGG_API_TOKEN ?= $(call ygg-token,e2e)
 e2e:
 	docker compose --profile e2e build
 	docker compose --profile e2e run --rm e2e

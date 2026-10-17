@@ -1,6 +1,8 @@
 package model
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -23,6 +25,8 @@ type TriageResult struct {
 	RecommendedAction string   `json:"recommended_action"`
 	Engine            string   `json:"engine"`
 	Model             string   `json:"model"`
+	// NormalizedEvent triado (opcional; ausente vira {}).
+	RawEvent json.RawMessage `json:"raw_event,omitempty"`
 }
 
 var uuidRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
@@ -47,7 +51,7 @@ func (t TriageResult) Validate() error {
 	if !severities[t.Severity] {
 		errs = append(errs, fmt.Errorf("severity inválida: %q", t.Severity))
 	}
-	if !t.Verdict.Valid() {
+	if !t.Verdict.Decided() {
 		errs = append(errs, fmt.Errorf("verdict inválido: %q", t.Verdict))
 	}
 	if t.Confidence < 0 || t.Confidence > 1 {
@@ -67,6 +71,9 @@ func (t TriageResult) Validate() error {
 			errs = append(errs, fmt.Errorf("iocs[%d]: kind e value obrigatórios", i))
 		}
 	}
+	if raw := bytes.TrimSpace(t.RawEvent); len(raw) > 0 && !bytes.Equal(raw, []byte("null")) && raw[0] != '{' {
+		errs = append(errs, errors.New("raw_event deve ser objeto JSON"))
+	}
 	return errors.Join(errs...)
 }
 
@@ -75,6 +82,10 @@ func (t TriageResult) Incident(now time.Time) Incident {
 	iocs := t.IOCs
 	if iocs == nil {
 		iocs = []IOC{}
+	}
+	raw := json.RawMessage(bytes.TrimSpace(t.RawEvent))
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		raw = json.RawMessage(`{}`)
 	}
 	return Incident{
 		EventID:           t.EventID,
@@ -90,6 +101,8 @@ func (t TriageResult) Incident(now time.Time) Incident {
 		Model:             t.Model,
 		IOCs:              iocs,
 		Status:            StatusOpen,
+		RawEvent:          raw,
 		CreatedAt:         now,
+		UpdatedAt:         now,
 	}
 }

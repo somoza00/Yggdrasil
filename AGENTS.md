@@ -46,6 +46,7 @@ arquitetura no código; leia as ADRs.
 | ADR-003 | Storage: PostgreSQL (estruturado) + Redis (streams/cache) | **ACEITO** |
 | ADR-004 | AI layer: LiteLLM + Pydantic AI + Langfuse | **ACEITO** |
 | ADR-005 | Contrato de eventos assíncrono (Redis Streams) | **ACEITO** |
+| ADR-006 | Autenticação do ygg-api (JWT HS256, token de serviço) | **ACEITO** |
 
 ### Linguagem por camada (ADR-001)
 
@@ -65,6 +66,7 @@ linguagem certa da camada, não "tudo em uma só":
 ### Storage (ADR-003)
 
 - **PostgreSQL**: dados estruturados — incidentes, playbooks, usuários, run history.
+  Migrations em `services/ygg-api/migrations/` (goose, aplicadas na subida do ygg-api).
 - **Redis**: streams (fila de eventos ingeridos) e cache.
 
 ### AI layer (ADR-004)

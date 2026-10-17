@@ -4,7 +4,8 @@
     → ygg-api POST /api/v1/incidents → GET /api/v1/incidents
 
 Precisa da stack no ar (`docker compose up`). Roda no container one-shot do
-compose (`make e2e`) ou do host, com os defaults abaixo.
+compose (`make e2e`) ou do host, com os defaults abaixo. O ygg-api exige JWT:
+E2E_YGG_API_TOKEN (o `make e2e` emite um com o segredo de dev).
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import time
+import urllib.error
 import urllib.request
 import uuid
 from collections.abc import Iterator
@@ -26,14 +28,18 @@ RAW_STREAM = os.environ.get("E2E_RAW_STREAM", "events:ingest:raw")
 NORMALIZED_STREAM = os.environ.get("E2E_NORMALIZED_STREAM", "events:ingest:normalized")
 HUGINN_GROUP = os.environ.get("E2E_HUGINN_GROUP", "huginn")
 MUNINN_GROUP = os.environ.get("E2E_MUNINN_GROUP", "muninn")
+YGG_API_TOKEN = os.environ.get("E2E_YGG_API_TOKEN", "")
 
 # Subida da stack (build, start) fica fora do orçamento do fluxo.
 READY_TIMEOUT_S = float(os.environ.get("E2E_READY_TIMEOUT", "90"))
 FLOW_TIMEOUT_S = 10.0
 
 
-def get_json(path: str) -> Any:
-    with urllib.request.urlopen(f"{YGG_API_URL}{path}", timeout=5) as resp:
+def get_json(path: str, token: str = YGG_API_TOKEN) -> Any:
+    req = urllib.request.Request(f"{YGG_API_URL}{path}")
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    with urllib.request.urlopen(req, timeout=5) as resp:
         return json.load(resp)
 
 
@@ -46,7 +52,7 @@ def group_exists(r: redis.Redis, stream: str, group: str) -> bool:
 
 def stack_ready(r: redis.Redis) -> bool:
     try:
-        get_json("/healthz")
+        get_json("/healthz", token="")  # rota pública
     except OSError:
         return False
     # Os grupos são criados com "$": um evento publicado antes disso seria
@@ -83,6 +89,12 @@ def wait_for_incident(title: str) -> dict[str, Any]:
     pytest.fail(f"nenhum incidente {title!r} em {FLOW_TIMEOUT_S}s")
 
 
+def test_api_requires_token(r: redis.Redis) -> None:
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        get_json("/api/v1/incidents", token="")
+    assert exc.value.code == 401
+
+
 def test_cef_log_becomes_incident(r: redis.Redis) -> None:
     nonce = uuid.uuid4().hex[:12]
     title = f"E2E beacon {nonce}"
@@ -100,5 +112,8 @@ def test_cef_log_becomes_incident(r: redis.Redis) -> None:
     assert incident["model"]
     assert incident["verdict"] in ("true_positive", "false_positive", "review")
     assert incident["status"] == "open"
+    uuid.UUID(incident["id"])  # gerado pelo Postgres
     uuid.UUID(incident["event_id"])
+    assert incident["raw_event"]["event_id"] == incident["event_id"]
+    assert incident["raw_event"]["raw"] == raw
     assert {"kind": "url", "value": f"http://c2.evil.net/{nonce}"} in incident["iocs"]

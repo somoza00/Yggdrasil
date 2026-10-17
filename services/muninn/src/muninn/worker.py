@@ -69,6 +69,15 @@ class Backoff:
         self._next = BACKOFF_START
 
 
+def auth_headers(settings: Settings) -> dict[str, str]:
+    """Authorization do POST /api/v1/incidents (ygg-api exige JWT)."""
+    token = settings.ygg_api_service_token.get_secret_value()
+    if not token:
+        logger.warning("YGG_API_SERVICE_TOKEN vazio: o ygg-api vai recusar os incidentes (401)")
+        return {}
+    return {"Authorization": f"Bearer {token}"}
+
+
 async def _sleep(stop: asyncio.Event, seconds: float) -> None:
     """Dorme, mas acorda na hora se o worker for parado."""
     try:
@@ -106,7 +115,9 @@ class TriageWorker:
             protocol=2,
         )
         http = httpx.AsyncClient(
-            base_url=settings.ygg_api_url, timeout=settings.ygg_api_timeout_seconds
+            base_url=settings.ygg_api_url,
+            timeout=settings.ygg_api_timeout_seconds,
+            headers=auth_headers(settings),
         )
         # Agente criado uma vez (reaproveita o cliente HTTP do LLM).
         triage_fn = partial(triage, settings=settings, agent=build_agent(settings))
@@ -159,6 +170,15 @@ class TriageWorker:
             return False
         if resp.status_code >= 500 or resp.status_code == 429:
             logger.warning("ygg-api respondeu %s para %s", resp.status_code, alert.event_id)
+            return False
+        if resp.status_code in (401, 403):
+            # Token ausente, expirado ou de outro segredo: erro de configuração,
+            # não do evento. Descartar perderia todos os eventos até a correção.
+            logger.error(
+                "ygg-api recusou o token de serviço (%s) para %s; evento fica pendente",
+                resp.status_code,
+                alert.event_id,
+            )
             return False
         if resp.status_code >= 400:
             logger.error(

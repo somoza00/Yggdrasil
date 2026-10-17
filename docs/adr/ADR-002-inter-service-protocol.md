@@ -2,7 +2,8 @@
 
 - **Status:** FECHADO — **REST**, duas chamadas síncronas
 - **Data:** 2026-10-13 (rascunho inicial) · 2026-10-16 (decisão)
-- **Relacionados:** ADR-005 (contrato assíncrono via Redis Streams)
+- **Relacionados:** ADR-005 (contrato assíncrono via Redis Streams), ADR-006
+  (autenticação)
 
 ## Contexto
 
@@ -68,7 +69,8 @@ Regras para as duas chamadas:
 - Timeouts explícitos: o cliente muninn no ygg-api usa 60 s (cobre o LLM); o
   cliente ygg-api no muninn usa `MUNNIN_YGG_API_TIMEOUT_SECONDS` (10 s).
 - Na chamada 2, um 5xx, 429 ou erro de rede mantém o evento pendente no stream
-  para nova tentativa. Um 4xx descarta o evento com log de erro.
+  para nova tentativa. 401 e 403 também (token de serviço errado é erro de
+  configuração, ADR-006). Qualquer outro 4xx descarta o evento com log de erro.
 
 ## Consequências
 
@@ -76,5 +78,5 @@ Regras para as duas chamadas:
   nem `.proto`: `proto/` guarda só os schemas e fixtures de contrato.
 - O contrato da chamada 2 é verificado pela fixture compartilhada nos testes do
   muninn e do ygg-api. Ainda falta uma spec OpenAPI do ygg-api.
-- Pendente: autenticação serviço a serviço. Hoje as duas rotas aceitam
-  qualquer chamada que chegue pela rede.
+- A chamada 2 é autenticada por JWT de serviço (ADR-006). Pendente: autenticar
+  a chamada 1 no muninn, que ainda aceita qualquer chamada que chegue pela rede.

@@ -24,3 +24,7 @@ de fila e cache de baixa latência.
   (sem perda por concorrência), com ack. Ideal para ingest tolerante a falha.
 - Migrations de schema do Postgres são aplicadas por ygg-api (ou serviço de
   migrations dedicado no futuro).
+  - Implementado (2026-10-17): SQL em `services/ygg-api/migrations/`, embutido
+    no binário (`go:embed`) e aplicado com goose na subida, antes do servidor
+    HTTP. Um advisory lock do Postgres serializa réplicas que sobem juntas.
+    Uma migration aplicada nunca é editada; mudança de schema é arquivo novo.

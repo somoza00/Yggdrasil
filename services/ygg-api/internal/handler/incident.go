@@ -3,10 +3,11 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
-	"strings"
 	"time"
 
+	"github.com/somoza00/yggdrasil/services/ygg-api/internal/middleware"
 	"github.com/somoza00/yggdrasil/services/ygg-api/internal/model"
 	"github.com/somoza00/yggdrasil/services/ygg-api/internal/store"
 )
@@ -61,7 +62,8 @@ func (h *IncidentHandlers) decodeBody(w http.ResponseWriter, r *http.Request, v 
 func (h *IncidentHandlers) List(w http.ResponseWriter, r *http.Request) {
 	items, err := h.store.List(r.Context())
 	if err != nil {
-		h.writeErr(w, http.StatusInternalServerError, "falha ao listar notificações")
+		log.Printf("incidents list: %v", err)
+		h.writeErr(w, http.StatusInternalServerError, "falha ao listar incidentes")
 		return
 	}
 	h.writeJSON(w, http.StatusOK, items)
@@ -81,6 +83,7 @@ func (h *IncidentHandlers) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	it, created, err := h.store.Create(r.Context(), in.Incident(time.Now().UTC()))
 	if err != nil {
+		log.Printf("incidents create: %v", err)
 		h.writeErr(w, http.StatusInternalServerError, "falha ao criar incidente")
 		return
 	}
@@ -91,55 +94,38 @@ func (h *IncidentHandlers) Create(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, code, it)
 }
 
-// Route enruta o handler conforme método, num padrão simples estilo mux.
-// Uso: router.HandleFunc("/api/v1/incidents", h.Route)
-func (h *IncidentHandlers) Route(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		h.List(w, r)
-	case http.MethodPost:
-		h.Create(w, r)
-	default:
-		h.writeErr(w, http.StatusMethodNotAllowed, "método não suportado")
-	}
-}
-
-// RouteID enruta /api/v1/incidents/{id} por método (GET).
-func (h *IncidentHandlers) RouteID(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		h.GetByID(w, r)
-	case http.MethodPatch:
-		h.PatchVerdict(w, r)
-	default:
-		h.writeErr(w, http.StatusMethodNotAllowed, "método não suportado")
-	}
-}
-
-func idFromPath(p string) string {
-	parts := strings.Split(strings.Trim(p, "/"), "/")
-	if len(parts) == 0 {
-		return ""
-	}
-	return parts[len(parts)-1]
+// Register registra as rotas de incidents no mux. A autenticação fica no
+// middleware.Auth em volta do mux.
+func (h *IncidentHandlers) Register(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/v1/incidents", h.List)
+	mux.HandleFunc("POST /api/v1/incidents", h.Create)
+	mux.HandleFunc("GET /api/v1/incidents/{id}", h.GetByID)
+	mux.HandleFunc("PATCH /api/v1/incidents/{id}/verdict", h.PatchVerdict)
 }
 
 // GetByID responde GET /api/v1/incidents/{id}.
 func (h *IncidentHandlers) GetByID(w http.ResponseWriter, r *http.Request) {
-	it, err := h.store.Get(r.Context(), idFromPath(r.URL.Path))
+	it, err := h.store.Get(r.Context(), r.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
 		h.writeErr(w, http.StatusNotFound, "incidente não encontrado")
 		return
 	}
 	if err != nil {
+		log.Printf("incidents get: %v", err)
 		h.writeErr(w, http.StatusInternalServerError, "erro ao buscar incidente")
 		return
 	}
 	h.writeJSON(w, http.StatusOK, it)
 }
 
-// PatchVerdict responde PATCH /api/v1/incidents/{id} com body {verdict}.
+// PatchVerdict responde PATCH /api/v1/incidents/{id}/verdict com body
+// {verdict}. Quem mudou é o sub do JWT; a store grava a auditoria.
 func (h *IncidentHandlers) PatchVerdict(w http.ResponseWriter, r *http.Request) {
+	changedBy := middleware.Subject(r.Context())
+	if changedBy == "" {
+		h.writeErr(w, http.StatusUnauthorized, "não autenticado")
+		return
+	}
 	var body struct {
 		Verdict model.Veredito `json:"verdict"`
 	}
@@ -150,12 +136,13 @@ func (h *IncidentHandlers) PatchVerdict(w http.ResponseWriter, r *http.Request) 
 		h.writeErr(w, http.StatusBadRequest, "verdict inválido")
 		return
 	}
-	it, err := h.store.UpdateVerdict(r.Context(), idFromPath(r.URL.Path), body.Verdict)
+	it, err := h.store.UpdateVerdict(r.Context(), r.PathValue("id"), body.Verdict, changedBy)
 	if errors.Is(err, store.ErrNotFound) {
 		h.writeErr(w, http.StatusNotFound, "incidente não encontrado")
 		return
 	}
 	if err != nil {
+		log.Printf("incidents patch verdict: %v", err)
 		h.writeErr(w, http.StatusInternalServerError, "erro ao atualizar incidente")
 		return
 	}

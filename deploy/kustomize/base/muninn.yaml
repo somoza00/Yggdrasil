@@ -46,6 +46,12 @@ spec:
                 secretKeyRef:
                   name: yggdrasil-secrets
                   key: langfuse_secret_key
+            # JWT de serviço para o POST /api/v1/incidents do ygg-api.
+            - name: YGG_API_SERVICE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: yggdrasil-secrets
+                  key: ygg_api_service_token
           livenessProbe:
             httpGet:
               path: /healthz

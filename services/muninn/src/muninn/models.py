@@ -147,6 +147,8 @@ class TriageResult(BaseModel):
     recommended_action: str
     engine: Engine
     model: str
+    # NormalizedEvent triado; o ygg-api guarda em incidents.raw_event.
+    raw_event: dict[str, Any]
 
     @classmethod
     def from_triage(cls, alert: AlertNormalized, decision: TriageDecision) -> Self:
@@ -156,6 +158,7 @@ class TriageResult(BaseModel):
             source=alert.source,
             severity=alert.severity_hint,
             iocs=alert.iocs,
+            raw_event=alert.model_dump(mode="json"),
             **decision.model_dump(),
         )
 

@@ -2,7 +2,7 @@
 
 import os
 
-from pydantic import Field
+from pydantic import AliasChoices, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -32,6 +32,13 @@ class Settings(BaseSettings):
     # Backend de orquestração (ygg-api)
     ygg_api_url: str = "http://127.0.0.1:8080"
     ygg_api_timeout_seconds: float = 10.0
+    # JWT de serviço enviado como Bearer ao ygg-api (emitido com o
+    # cmd/ygg-token do ygg-api). Nome sem o prefixo MUNNIN_ de propósito: é
+    # um segredo compartilhado com o ygg-api.
+    ygg_api_service_token: SecretStr = Field(
+        default=SecretStr(""),
+        validation_alias=AliasChoices("YGG_API_SERVICE_TOKEN", "ygg_api_service_token"),
+    )
     # Worker do stream de eventos normalizados (ADR-005)
     worker_enabled: bool = True
     redis_url: str = "redis://127.0.0.1:6379"
