@@ -135,6 +135,42 @@ def test_ygg_api_unreachable_keeps_entry_pending(cef_event: dict[str, Any]) -> N
     assert redis.acked == []
 
 
+@pytest.mark.parametrize("status", [401, 403])
+def test_auth_rejection_keeps_entry_pending(cef_event: dict[str, Any], status: int) -> None:
+    # Token errado é problema de configuração: descartar perderia o evento.
+    redis = FakeRedis()
+    assert not asyncio.run(make_worker(redis, Recorder(status)).process(*entry(cef_event)))
+    assert redis.acked == []
+
+
+def test_service_token_sent_as_bearer(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("YGG_API_SERVICE_TOKEN", "svc-token")
+    worker = TriageWorker.from_settings(Settings(litellm_base_url=""))
+    try:
+        assert worker.http.headers["Authorization"] == "Bearer svc-token"
+    finally:
+        asyncio.run(worker.aclose())
+
+
+def test_service_token_is_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("YGG_API_SERVICE_TOKEN", "svc-token")
+    settings = Settings()
+    assert "svc-token" not in repr(settings)
+    assert settings.ygg_api_service_token.get_secret_value() == "svc-token"
+
+
+def test_missing_service_token_sends_no_header(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.delenv("YGG_API_SERVICE_TOKEN", raising=False)
+    worker = TriageWorker.from_settings(Settings(litellm_base_url=""))
+    try:
+        assert "Authorization" not in worker.http.headers
+        assert "YGG_API_SERVICE_TOKEN" in caplog.text
+    finally:
+        asyncio.run(worker.aclose())
+
+
 def test_rejected_by_ygg_api_is_dropped(cef_event: dict[str, Any]) -> None:
     # 4xx = payload inválido: reprocessar não resolve e travaria o stream.
     redis = FakeRedis()
