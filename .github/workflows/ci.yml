@@ -17,6 +17,19 @@ jobs:
   go-check:
     name: go-check (ygg-api)
     runs-on: ubuntu-latest
+    # Postgres descartável para os testes de integração da store.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 15
     defaults:
       run:
         working-directory: services/ygg-api
@@ -25,7 +38,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: services/ygg-api/go.mod
-          cache-dependency-path: services/ygg-api/go.mod
+          cache-dependency-path: services/ygg-api/go.sum
       - name: go vet
         run: go vet ./...
       - name: gofmt
@@ -37,6 +50,8 @@ jobs:
             exit 1
           fi
       - name: go test -race
+        env:
+          YGG_TEST_DATABASE_URL: postgres://postgres:test@127.0.0.1:5432/postgres?sslmode=disable
         run: go test -race ./...
 
   rust-check:
