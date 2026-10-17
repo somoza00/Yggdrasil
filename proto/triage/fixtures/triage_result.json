@@ -14,5 +14,21 @@
   "rationale": "Outbound beacon to a known C2 domain from an internal host.",
   "recommended_action": "Isolate 10.0.0.5 and block c2.evil.net.",
   "engine": "llm",
-  "model": "gpt-4o-mini"
+  "model": "gpt-4o-mini",
+  "raw_event": {
+    "schema_version": "1.0",
+    "event_id": "c9621933-88bf-5aac-afc8-9c3348befd2c",
+    "source": "cef",
+    "title": "Beacon to c2.evil.net",
+    "severity_hint": "critical",
+    "raw": "CEF:0|ACME|EDR Agent|2.1|1001|Beacon to c2.evil.net|9|src=10.0.0.5 request=http://c2.evil.net/beacon",
+    "parsed": {
+      "kind": "cef"
+    },
+    "iocs": [
+      { "kind": "domain", "value": "c2.evil.net" },
+      { "kind": "ip", "value": "10.0.0.5" },
+      { "kind": "url", "value": "http://c2.evil.net/beacon" }
+    ]
+  }
 }
