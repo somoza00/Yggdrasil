@@ -2,12 +2,12 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
+	"fmt"
 	"slices"
 	"sync"
-
-	"crypto/rand"
-	"encoding/hex"
+	"time"
 
 	"github.com/somoza00/yggdrasil/services/ygg-api/internal/model"
 )
@@ -15,15 +15,17 @@ import (
 // ErrNotFound é retornado quando um incidente não existe.
 var ErrNotFound = errors.New("incidente nao encontrado")
 
-// Store define o contrato de persistência. A implementação atual é em memória
-// (dev); Postgres será a impl real deste contrato (ver ADR-003).
+// Store define o contrato de persistência. Postgres é a implementação real
+// (ADR-003); Memory serve aos testes de handler.
 type Store interface {
 	// Create grava um incidente novo com ID gerado. Se já existe incidente
 	// para o mesmo EventID, devolve o existente e created=false (idempotente).
 	Create(ctx context.Context, in model.Incident) (it *model.Incident, created bool, err error)
 	Get(ctx context.Context, id string) (*model.Incident, error)
 	List(ctx context.Context) ([]*model.Incident, error)
-	UpdateVerdict(ctx context.Context, id string, verdict model.Veredito) (*model.Incident, error)
+	// UpdateVerdict troca o verdict e registra quem mudou. A implementação
+	// Postgres grava uma linha em incident_audit por chamada.
+	UpdateVerdict(ctx context.Context, id string, verdict model.Veredito, changedBy string) (*model.Incident, error)
 }
 
 // Memory é uma Store em memória para dev/testes, segura para uso concorrente.
@@ -41,6 +43,7 @@ func NewMemory() *Memory {
 
 func clone(it model.Incident) *model.Incident {
 	it.IOCs = slices.Clone(it.IOCs)
+	it.RawEvent = slices.Clone(it.RawEvent)
 	return &it
 }
 
@@ -80,20 +83,27 @@ func (m *Memory) List(_ context.Context) ([]*model.Incident, error) {
 	return out, nil
 }
 
-func (m *Memory) UpdateVerdict(_ context.Context, id string, verdict model.Veredito) (*model.Incident, error) {
+func (m *Memory) UpdateVerdict(_ context.Context, id string, verdict model.Veredito, changedBy string) (*model.Incident, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	it, ok := m.items[id]
 	if !ok {
 		return nil, ErrNotFound
 	}
+	now := time.Now().UTC()
 	it.Verdict = verdict
+	it.UpdatedAt = now
+	it.VerdictChangedBy = &changedBy
+	it.VerdictChangedAt = &now
 	m.items[id] = it
 	return clone(it), nil
 }
 
+// newID gera um UUIDv4, o mesmo formato do gen_random_uuid() do Postgres.
 func newID() string {
-	b := make([]byte, 8)
+	b := make([]byte, 16)
 	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
+	b[6] = b[6]&0x0f | 0x40
+	b[8] = b[8]&0x3f | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
