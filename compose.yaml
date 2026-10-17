@@ -7,6 +7,11 @@ name: yggdrasil
 #   --profile observability          + langfuse
 #
 # Sem LITELLM_BASE_URL o muninn tria só com a heurística (engine=heuristic).
+#
+# Auth: o ygg-api exige JWT. `make dev-up` e `make e2e` emitem os tokens de
+# serviço (YGG_API_SERVICE_TOKEN, E2E_YGG_API_TOKEN) com o JWT_SECRET de dev.
+# Com `docker compose up` direto, sem token, o muninn recebe 401 e os eventos
+# ficam pendentes no stream até o token ser configurado.
 services:
   postgres:
     image: postgres:17-alpine
@@ -52,6 +57,8 @@ services:
     build: ./services/ygg-api
     environment:
       YGG_API_PORT: "8080"
+      # Compose é só dev: libera o JWT_SECRET padrão (recusado em outro ENV).
+      ENV: development
       DATABASE_URL: postgres://${POSTGRES_USER:-ygg}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-yggdrasil}
       REDIS_URL: redis://redis:6379
       JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret}
@@ -76,7 +83,8 @@ services:
       redis:
         condition: service_started
 
-  # O muninn só lê variáveis com prefixo MUNNIN_ (pydantic-settings).
+  # O muninn lê variáveis com prefixo MUNNIN_ (pydantic-settings), exceto o
+  # token de serviço compartilhado com o ygg-api.
   muninn:
     build: ./services/muninn
     environment:
@@ -84,6 +92,7 @@ services:
       MUNNIN_REDIS_URL: redis://redis:6379
       MUNNIN_REDIS_STREAM_NORMALIZED: ${REDIS_STREAM_NORMALIZED:-events:ingest:normalized}
       MUNNIN_YGG_API_URL: http://ygg-api:8080
+      YGG_API_SERVICE_TOKEN: ${YGG_API_SERVICE_TOKEN:-}
       # Vazio = LLM desligado. Aponte para um LiteLLM proxy para usar o agente.
       MUNNIN_LITELLM_BASE_URL: ${LITELLM_BASE_URL:-}
       MUNNIN_LITELLM_API_KEY: ${LITELLM_API_KEY:-}
@@ -107,6 +116,7 @@ services:
     environment:
       E2E_REDIS_URL: redis://redis:6379
       E2E_YGG_API_URL: http://ygg-api:8080
+      E2E_YGG_API_TOKEN: ${E2E_YGG_API_TOKEN:-}
       E2E_RAW_STREAM: ${REDIS_STREAM_INGEST:-events:ingest:raw}
       E2E_NORMALIZED_STREAM: ${REDIS_STREAM_NORMALIZED:-events:ingest:normalized}
       E2E_HUGINN_GROUP: ${REDIS_CONSUMER_GROUP:-huginn}
