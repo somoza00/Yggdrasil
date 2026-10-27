@@ -99,8 +99,23 @@ func (h *IncidentHandlers) Create(w http.ResponseWriter, r *http.Request) {
 func (h *IncidentHandlers) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/incidents", h.List)
 	mux.HandleFunc("POST /api/v1/incidents", h.Create)
+	// Rota literal: o ServeMux casa o padrão mais específico, então ela não é
+	// capturada por {id}.
+	mux.HandleFunc("GET /api/v1/incidents/stats/triage-accuracy", h.Stats)
 	mux.HandleFunc("GET /api/v1/incidents/{id}", h.GetByID)
 	mux.HandleFunc("PATCH /api/v1/incidents/{id}/verdict", h.PatchVerdict)
+}
+
+// Stats responde GET /api/v1/incidents/stats/triage-accuracy: concordância
+// entre o veredito da IA e o veredito final do analista (fonte: incident_audit).
+func (h *IncidentHandlers) Stats(w http.ResponseWriter, r *http.Request) {
+	stats, err := h.store.TriageStats(r.Context())
+	if err != nil {
+		log.Printf("incidents stats: %v", err)
+		h.writeErr(w, http.StatusInternalServerError, "falha ao calcular a acurácia da triagem")
+		return
+	}
+	h.writeJSON(w, http.StatusOK, stats)
 }
 
 // GetByID responde GET /api/v1/incidents/{id}.

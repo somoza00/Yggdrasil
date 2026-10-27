@@ -61,7 +61,7 @@ flowchart LR
 
 | Serviço | Linguagem | Papel |
 |:--------|:----------|:------|
-| **ygg-api** | Go | API gateway · auth JWT · playbooks · incidentes |
+| **ygg-api** | Go | API gateway · auth JWT · incidentes · acurácia da triagem |
 | **huginn** | Rust | ingest de eventos · parsing CEF/syslog · IOC · correlação |
 | **muninn** | Python | agentes de IA de triagem · gateway LLM · observabilidade |
 
@@ -69,7 +69,7 @@ flowchart LR
 
 | Camada | Escolha |
 |:--------|:--------|
-| **APIs** | HTTP (contrato síncrono — **ADR-002 em decisão**, spike) |
+| **APIs** | HTTP/REST (contrato síncrono — ADR-002) |
 | **Dados** | PostgreSQL (estruturado) + Redis (streams/cache) |
 | **IA** | Pydantic AI + LiteLLM + Langfuse |
 | **Deploy** | Kubernetes + kustomize |
@@ -81,9 +81,11 @@ Toda decisão importante fica em [`docs/adr/`](docs/adr/). Leia antes de codar.
 | ADR | Tema | Status |
 |:----|:-----|:------|
 | **001** | Linguagem por camada (Go/Rust/Python) | ✅ Aceito |
-| **002** | Protocolo síncrono entre serviços (gRPC vs REST) | 🚧 Em aberto (spike) |
+| **002** | Protocolo síncrono entre serviços (REST, duas chamadas) | ✅ Aceito |
 | **003** | Storage Postgres + Redis | ✅ Aceito |
 | **004** | AI layer LiteLLM + Pydantic AI + Langfuse | ✅ Aceito |
+| **005** | Contrato de evento assíncrono (Redis Streams) | ✅ Aceito |
+| **006** | Autenticação do ygg-api (JWT HS256) | ✅ Aceito |
 
 ## 🚀 Começando
 
@@ -124,10 +126,13 @@ make fmt        # gofmt / cargo fmt / ruff format
 ## 🗺️ Roadmap
 
 - [x] Scaffold do monorepo (3 serviços + ADRs + deploy)
-- [ ] **Spike ADR-002** — decidir gRPC vs REST para o contrato síncrono
-- [ ] Auth JWT real no ygg-api + CRUD de playbooks
-- [ ] Ingest ponta-a-ponta do Redis Stream até a triagem
-- [ ] Avaliação das triagens da IA contra o veredito do analista (Langfuse)
+- [x] **ADR-002** — contrato síncrono em REST (duas chamadas)
+- [x] Auth JWT real no ygg-api
+- [x] Ingest ponta-a-ponta do Redis Stream até a triagem
+- [x] Acurácia da IA medida contra o veredito do analista
+      (`GET /api/v1/incidents/stats/triage-accuracy`)
+- [ ] Painéis/datasets de avaliação no Langfuse (além das traces por triagem)
+- [ ] CRUD de playbooks + execução de resposta
 
 ## 🧭 Contexto para agentes de IA
 

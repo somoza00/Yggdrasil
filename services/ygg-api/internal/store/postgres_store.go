@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log"
 	"regexp"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -153,6 +155,100 @@ func (p *Postgres) List(ctx context.Context) ([]*model.Incident, error) {
 		out = append(out, it)
 	}
 	return out, rows.Err()
+}
+
+// triageStatsQuery agrega a concordância em UMA consulta. O veredito da IA é o
+// primeiro `old_verdict` (o que existia antes do primeiro PATCH) ou, se o
+// analista nunca mexeu, o veredito atual; o veredito final é o último
+// `new_verdict`. `changed_at` usa now() (início da transação), então o `id`
+// identity desempata PATCHes na mesma transação.
+const triageStatsQuery = `
+WITH triaged AS (
+	SELECT
+		i.engine,
+		i.model,
+		COALESCE(
+			(SELECT a.old_verdict FROM incident_audit a
+			  WHERE a.incident_id = i.id
+			  ORDER BY a.changed_at, a.id LIMIT 1),
+			i.verdict
+		) AS ai_verdict,
+		(SELECT a.new_verdict FROM incident_audit a
+		  WHERE a.incident_id = i.id
+		  ORDER BY a.changed_at DESC, a.id DESC LIMIT 1) AS final_verdict
+	FROM incidents i
+)
+SELECT engine, model, ai_verdict,
+	count(*) AS total,
+	count(*) FILTER (WHERE final_verdict IS NOT NULL) AS reviewed,
+	count(*) FILTER (WHERE final_verdict IS NOT NULL AND final_verdict = ai_verdict) AS agreed
+FROM triaged
+GROUP BY engine, model, ai_verdict
+ORDER BY engine, model, ai_verdict`
+
+// TriageStats roda a agregação no banco (uma varredura de incidents +
+// incident_audit) e monta os recortes por engine/model e por veredito da IA.
+func (p *Postgres) TriageStats(ctx context.Context) (*model.TriageStats, error) {
+	rows, err := p.pool.Query(ctx, triageStatsQuery)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	stats := &model.TriageStats{}
+	byEngine := make(map[engineKey]*model.EngineAccuracy)
+	byVerdict := make(map[string]*model.VerdictAccuracy)
+	for rows.Next() {
+		var (
+			engine, engineModel, aiVerdict string
+			total, reviewed, agreed        int
+		)
+		if err := rows.Scan(&engine, &engineModel, &aiVerdict, &total, &reviewed, &agreed); err != nil {
+			return nil, err
+		}
+		stats.TotalIncidents += total
+		stats.Reviewed += reviewed
+		stats.Agreed += agreed
+
+		ek := engineKey{engine, engineModel}
+		if byEngine[ek] == nil {
+			byEngine[ek] = &model.EngineAccuracy{Engine: engine, Model: engineModel}
+		}
+		byEngine[ek].Reviewed += reviewed
+		byEngine[ek].Agreed += agreed
+
+		if byVerdict[aiVerdict] == nil {
+			byVerdict[aiVerdict] = &model.VerdictAccuracy{AIVerdict: aiVerdict}
+		}
+		byVerdict[aiVerdict].Reviewed += reviewed
+		byVerdict[aiVerdict].Agreed += agreed
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	stats.Accuracy = model.Rate(stats.Agreed, stats.Reviewed)
+	stats.ByEngine = make([]model.EngineAccuracy, 0, len(byEngine))
+	for _, e := range byEngine {
+		e.Accuracy = model.Rate(e.Agreed, e.Reviewed)
+		stats.ByEngine = append(stats.ByEngine, *e)
+	}
+	slices.SortFunc(stats.ByEngine, func(a, b model.EngineAccuracy) int {
+		if c := strings.Compare(a.Engine, b.Engine); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Model, b.Model)
+	})
+
+	stats.ByAIVerdict = make([]model.VerdictAccuracy, 0, len(byVerdict))
+	for _, v := range byVerdict {
+		v.Accuracy = model.Rate(v.Agreed, v.Reviewed)
+		stats.ByAIVerdict = append(stats.ByAIVerdict, *v)
+	}
+	slices.SortFunc(stats.ByAIVerdict, func(a, b model.VerdictAccuracy) int {
+		return strings.Compare(a.AIVerdict, b.AIVerdict)
+	})
+	return stats, nil
 }
 
 // UpdateVerdict troca o verdict e grava a linha de auditoria na mesma
