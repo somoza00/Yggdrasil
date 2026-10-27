@@ -1,6 +1,7 @@
 """Aplicação FastAPI do muninn.
 
-- POST /triage: chamada síncrona do ygg-api (REST, ADR-002).
+- POST /triage: chamada síncrona do ygg-api (REST, ADR-002). Usa o agente LLM e,
+  se ele estiver desligado ou falhar, o classificador heurístico de fallback.
 - Worker em background: consome events:ingest:normalized (ADR-005), tria via
   LLM e cria o incidente no ygg-api. Desligável com MUNNIN_WORKER_ENABLED=false.
 """
@@ -12,9 +13,9 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 
-from muninn.agents import triage_sync
+from muninn.agents.triage import build_agent, triage
 from muninn.config.settings import get_settings
 from muninn.models import AlertNormalized, TriageDecision
 from muninn.worker import TriageWorker
@@ -37,9 +38,13 @@ def configure_logging(level: str) -> None:
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     configure_logging(settings.log_level)
+    app.state.settings = settings
+    # Agente criado uma vez por processo: reusa o cliente HTTP do LLM no
+    # endpoint e no worker. None quando o LLM está desligado.
+    app.state.triage_agent = build_agent(settings)
     if not settings.worker_enabled:
         yield
         return
@@ -65,9 +70,14 @@ app = FastAPI(title="muninn", version="0.1.0", lifespan=lifespan)
 
 
 @app.post("/triage", response_model=TriageDecision)
-def handle_triage(alert: AlertNormalized) -> TriageDecision:
-    """Recebe um alerta normalizado e devolve a decisão estruturada."""
-    return triage_sync(alert)
+async def handle_triage(alert: AlertNormalized, request: Request) -> TriageDecision:
+    """Recebe um alerta normalizado e devolve a decisão estruturada.
+
+    Caminho LLM com fallback heurístico: nunca devolve erro por o LLM estar
+    fora. A decisão diz qual engine decidiu (`decision.engine`).
+    """
+    settings = request.app.state.settings
+    return await triage(alert, settings=settings, agent=request.app.state.triage_agent)
 
 
 @app.get("/healthz")
