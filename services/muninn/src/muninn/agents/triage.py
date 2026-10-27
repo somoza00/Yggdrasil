@@ -17,6 +17,7 @@ from pydantic_ai.providers.litellm import LiteLLMProvider
 
 from muninn.config.settings import Settings
 from muninn.models import AlertNormalized, TriageAssessment, TriageDecision, classify_heuristic
+from muninn.tracing import finish_triage, triage_span
 
 logger = logging.getLogger(__name__)
 
@@ -61,8 +62,22 @@ async def triage(
     settings: Settings | None = None,
     agent: TriageAgent | None = None,
 ) -> TriageDecision:
-    """Roda a triagem pelo LLM; em falha ou LLM desligado, usa o fallback."""
+    """Roda a triagem pelo LLM; em falha ou LLM desligado, usa o fallback.
+
+    Cada triagem abre uma trace no Langfuse (quando configurado) com o
+    `event_id` do alerta, registrando entrada e decisão (ADR-004)."""
     settings = settings or Settings()
+    with triage_span(settings, alert) as span:
+        decision = await _decide(alert, settings, agent)
+        finish_triage(span, decision)
+        return decision
+
+
+async def _decide(
+    alert: AlertNormalized,
+    settings: Settings,
+    agent: TriageAgent | None,
+) -> TriageDecision:
     try:
         agent = agent or build_agent(settings)
         if agent is None:
@@ -75,6 +90,6 @@ async def triage(
 
 
 def triage_sync(alert: AlertNormalized) -> TriageDecision:
-    """Variante síncrona (rotas/testes) — sempre pelo fallback determinístico.
-    Não faz chamada a LLM; garante resposta sem depender de rede."""
+    """Variante síncrona (testes/CLI) — sempre pelo fallback determinístico.
+    Não faz chamada a LLM; o endpoint HTTP usa `triage` (assíncrono)."""
     return classify_heuristic(alert)
