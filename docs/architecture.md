@@ -45,8 +45,13 @@
 - **Langfuse** para traces/auditoria das decisões.
 
 ### ygg-api (Go) — API e orquestração
-- Auth JWT.
-- Recursos: incidentes, playbooks, run history.
+- Auth JWT (ADR-006).
+- Recursos: incidentes, run history.
+- Incidentes: listar, criar (idempotente por `event_id`), buscar, revisar veredito
+  (`PATCH .../verdict`, auditado) e medir a acurácia da triagem
+  (`GET /api/v1/incidents/stats/triage-accuracy`): compara o veredito original
+  da IA com o veredito final do analista, com recortes por engine/model e por
+  veredito proposto.
 - Dispara triagens via contrato síncrono com muninn (ver ADR-002).
 - Persistência em Postgres.
 
@@ -59,6 +64,9 @@
   `overlays/{dev,prod}`.
 - Segredos K8s / OpenBao em produção; `.env` apenas local.
 
-## Fluxo de contrato síncrono (ADRs 002)
-Pendente — ver `docs/adr/ADR-002-inter-service-protocol.md` e a proposta de
-spike. Enquanto não decidido, não travar contratos síncronos entre serviços.
+## Fluxo de contrato síncrono (ADR-002)
+**REST, com exatamente duas chamadas:** ygg-api → muninn `POST /triage`
+(re-triagem sob demanda, com o agente LLM e fallback heurístico) e muninn →
+ygg-api `POST /api/v1/incidents` (após a triagem assíncrona; idempotente por
+`event_id`). Todo o resto passa pelo Redis Streams (ADR-005). Uma chamada
+síncrona nova exige revisar o ADR-002.

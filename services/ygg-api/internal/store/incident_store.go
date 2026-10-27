@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,6 +27,9 @@ type Store interface {
 	// UpdateVerdict troca o verdict e registra quem mudou. A implementação
 	// Postgres grava uma linha em incident_audit por chamada.
 	UpdateVerdict(ctx context.Context, id string, verdict model.Veredito, changedBy string) (*model.Incident, error)
+	// TriageStats agrega a concordância entre a decisão da IA e o veredito
+	// final do analista (incident_audit).
+	TriageStats(ctx context.Context) (*model.TriageStats, error)
 }
 
 // Memory é uma Store em memória para dev/testes, segura para uso concorrente.
@@ -34,11 +38,20 @@ type Memory struct {
 	mu      sync.RWMutex
 	items   map[string]model.Incident
 	byEvent map[string]string // event_id -> id
+	// Histórico de veredito para TriageStats: o original (antes do primeiro
+	// PATCH) e o último aplicado — o equivalente a incident_audit.
+	original map[string]model.Veredito
+	last     map[string]model.Veredito
 }
 
 // NewMemory retorna uma Store em memória vazia.
 func NewMemory() *Memory {
-	return &Memory{items: make(map[string]model.Incident), byEvent: make(map[string]string)}
+	return &Memory{
+		items:    make(map[string]model.Incident),
+		byEvent:  make(map[string]string),
+		original: make(map[string]model.Veredito),
+		last:     make(map[string]model.Veredito),
+	}
 }
 
 func clone(it model.Incident) *model.Incident {
@@ -90,6 +103,10 @@ func (m *Memory) UpdateVerdict(_ context.Context, id string, verdict model.Vered
 	if !ok {
 		return nil, ErrNotFound
 	}
+	if _, seen := m.original[id]; !seen {
+		m.original[id] = it.Verdict
+	}
+	m.last[id] = verdict
 	now := time.Now().UTC()
 	it.Verdict = verdict
 	it.UpdatedAt = now
@@ -97,6 +114,68 @@ func (m *Memory) UpdateVerdict(_ context.Context, id string, verdict model.Vered
 	it.VerdictChangedAt = &now
 	m.items[id] = it
 	return clone(it), nil
+}
+
+type engineKey struct{ engine, model string }
+
+// TriageStats agrega em memória o mesmo que a consulta SQL do Postgres faz,
+// mantendo a paridade entre a implementação de teste e a real.
+func (m *Memory) TriageStats(_ context.Context) (*model.TriageStats, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	byEngine := make(map[engineKey]*model.EngineAccuracy)
+	byVerdict := make(map[string]*model.VerdictAccuracy)
+	stats := &model.TriageStats{}
+	for id, it := range m.items {
+		ai := it.Verdict
+		if original, seen := m.original[id]; seen {
+			ai = original
+		}
+		stats.TotalIncidents++
+		ek := engineKey{it.Engine, it.Model}
+		if byEngine[ek] == nil {
+			byEngine[ek] = &model.EngineAccuracy{Engine: it.Engine, Model: it.Model}
+		}
+		vk := string(ai)
+		if byVerdict[vk] == nil {
+			byVerdict[vk] = &model.VerdictAccuracy{AIVerdict: vk}
+		}
+		final, reviewed := m.last[id]
+		if !reviewed {
+			continue
+		}
+		stats.Reviewed++
+		byEngine[ek].Reviewed++
+		byVerdict[vk].Reviewed++
+		if final == ai {
+			stats.Agreed++
+			byEngine[ek].Agreed++
+			byVerdict[vk].Agreed++
+		}
+	}
+	stats.Accuracy = model.Rate(stats.Agreed, stats.Reviewed)
+
+	stats.ByEngine = make([]model.EngineAccuracy, 0, len(byEngine))
+	for _, e := range byEngine {
+		e.Accuracy = model.Rate(e.Agreed, e.Reviewed)
+		stats.ByEngine = append(stats.ByEngine, *e)
+	}
+	slices.SortFunc(stats.ByEngine, func(a, b model.EngineAccuracy) int {
+		if c := strings.Compare(a.Engine, b.Engine); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Model, b.Model)
+	})
+
+	stats.ByAIVerdict = make([]model.VerdictAccuracy, 0, len(byVerdict))
+	for _, v := range byVerdict {
+		v.Accuracy = model.Rate(v.Agreed, v.Reviewed)
+		stats.ByAIVerdict = append(stats.ByAIVerdict, *v)
+	}
+	slices.SortFunc(stats.ByAIVerdict, func(a, b model.VerdictAccuracy) int {
+		return strings.Compare(a.AIVerdict, b.AIVerdict)
+	})
+	return stats, nil
 }
 
 // newID gera um UUIDv4, o mesmo formato do gen_random_uuid() do Postgres.
