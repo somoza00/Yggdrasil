@@ -139,9 +139,35 @@ func (p *Postgres) Get(ctx context.Context, id string) (*model.Incident, error) 
 }
 
 // List devolve os incidentes do mais recente para o mais antigo.
-func (p *Postgres) List(ctx context.Context) ([]*model.Incident, error) {
-	rows, err := p.pool.Query(ctx,
-		`SELECT `+incidentCols+` FROM incidents ORDER BY created_at DESC, id`)
+func (p *Postgres) List(ctx context.Context, f ListFilter) ([]*model.Incident, error) {
+	// WHERE/LIMIT/OFFSET montados por posição ($1, $2, ...) e passados como
+	// argumentos: o valor do filtro nunca entra na string do SQL.
+	query := `SELECT ` + incidentCols + ` FROM incidents`
+	args := []any{}
+	where := []string{}
+	if f.Verdict != "" {
+		args = append(args, string(f.Verdict))
+		where = append(where, fmt.Sprintf("verdict = $%d", len(args)))
+	}
+	if f.Severity != "" {
+		// lower() nos dois lados: "High" no evento e "high" no filtro são o
+		// mesmo incidente (a severidade vem do parser, com a caixa da fonte).
+		args = append(args, f.Severity)
+		where = append(where, fmt.Sprintf("lower(severity) = lower($%d)", len(args)))
+	}
+	if len(where) > 0 {
+		query += " WHERE " + strings.Join(where, " AND ")
+	}
+	query += " ORDER BY created_at DESC, id"
+	if f.Limit > 0 {
+		args = append(args, f.Limit)
+		query += fmt.Sprintf(" LIMIT $%d", len(args))
+	}
+	if f.Offset > 0 {
+		args = append(args, f.Offset)
+		query += fmt.Sprintf(" OFFSET $%d", len(args))
+	}
+	rows, err := p.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

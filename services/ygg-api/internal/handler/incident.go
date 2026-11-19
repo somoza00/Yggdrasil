@@ -3,8 +3,11 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/somoza00/yggdrasil/services/ygg-api/internal/middleware"
@@ -58,9 +61,68 @@ func (h *IncidentHandlers) decodeBody(w http.ResponseWriter, r *http.Request, v 
 	return true
 }
 
-// List responde GET /api/v1/incidents.
+// Defaults e teto da listagem. Sem teto, GET /api/v1/incidents devolvia a fila
+// INTEIRA: numa base com histórico, a resposta passa de dezenas de MB e o
+// painel do analista carrega tudo para mostrar a primeira tela.
+const (
+	defaultListLimit = 50
+	maxListLimit     = 200
+	maxSeverityChars = 40
+)
+
+// listFilter traduz a query string em store.ListFilter.
+//
+// Em erro devolve a mensagem para o cliente: valor inválido aqui NÃO é
+// ignorado em silêncio (um `?limit=abc` respondendo a lista inteira é pior do
+// que um 400 dizendo o formato certo).
+func listFilter(r *http.Request) (store.ListFilter, error) {
+	q := r.URL.Query()
+	f := store.ListFilter{Limit: defaultListLimit}
+
+	if raw := strings.TrimSpace(q.Get("verdict")); raw != "" {
+		verdict := model.Veredito(strings.ToLower(raw))
+		if !verdict.Valid() {
+			return f, errors.New(
+				"verdict inválido: use open, true_positive, false_positive ou review",
+			)
+		}
+		f.Verdict = verdict
+	}
+	if raw := strings.TrimSpace(q.Get("severity")); raw != "" {
+		if len(raw) > maxSeverityChars {
+			return f, fmt.Errorf("severity inválida: máximo de %d caracteres", maxSeverityChars)
+		}
+		f.Severity = raw
+	}
+	if raw := q.Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 || n > maxListLimit {
+			return f, fmt.Errorf("limit inválido: use um inteiro entre 1 e %d", maxListLimit)
+		}
+		f.Limit = n
+	}
+	if raw := q.Get("offset"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 {
+			return f, errors.New("offset inválido: use um inteiro >= 0")
+		}
+		f.Offset = n
+	}
+	return f, nil
+}
+
+// List responde GET /api/v1/incidents?verdict=&severity=&limit=&offset=.
+//
+// Filtros e paginação existem para o painel do analista: antes só havia "tudo".
+// A ordem é created_at DESC (id desempata), então `offset += limit` percorre a
+// fila sem pular nem repetir incidente.
 func (h *IncidentHandlers) List(w http.ResponseWriter, r *http.Request) {
-	items, err := h.store.List(r.Context())
+	filter, err := listFilter(r)
+	if err != nil {
+		h.writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	items, err := h.store.List(r.Context(), filter)
 	if err != nil {
 		log.Printf("incidents list: %v", err)
 		h.writeErr(w, http.StatusInternalServerError, "falha ao listar incidentes")
