@@ -161,7 +161,7 @@ func TestPostgresListNewestFirst(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	items, err := st.List(ctx)
+	items, err := st.List(ctx, ListFilter{})
 	if err != nil || len(items) != 3 {
 		t.Fatalf("list: %d %v", len(items), err)
 	}
@@ -174,7 +174,7 @@ func TestPostgresListNewestFirst(t *testing.T) {
 
 func TestPostgresListEmptyIsNotNil(t *testing.T) {
 	st, _ := newPostgres(t)
-	items, err := st.List(context.Background())
+	items, err := st.List(context.Background(), ListFilter{})
 	if err != nil || items == nil {
 		t.Fatalf("lista vazia deve ser [] (JSON), veio %v %v", items, err)
 	}

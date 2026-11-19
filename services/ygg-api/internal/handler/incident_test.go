@@ -333,3 +333,106 @@ func TestConcurrentCreateAndList(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// --- Filtros e paginação da listagem ---
+
+func decodeList(t *testing.T, rec *httptest.ResponseRecorder) []model.Incident {
+	t.Helper()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("esperado 200, veio %d: %s", rec.Code, rec.Body.String())
+	}
+	var items []model.Incident
+	if err := json.NewDecoder(rec.Body).Decode(&items); err != nil {
+		t.Fatalf("decode da lista falhou: %v", err)
+	}
+	return items
+}
+
+// seed cria um incidente por (event_id, verdict, severity) a partir da fixture.
+func seed(t *testing.T, h http.Handler, n int, verdict, severity string) string {
+	t.Helper()
+	body := fixture(t)
+	body["event_id"] = fmt.Sprintf("00000000-0000-4000-8000-%012d", n)
+	body["verdict"] = verdict
+	body["severity"] = severity
+	rec := post(t, h, body)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("seed %d: esperado 201, veio %d: %s", n, rec.Code, rec.Body.String())
+	}
+	return decode(t, rec).ID
+}
+
+func TestListFiltersByVerdictAndSeverity(t *testing.T) {
+	h := newTestRouter()
+	seed(t, h, 1, "true_positive", "critical")
+	seed(t, h, 2, "false_positive", "low")
+	seed(t, h, 3, "review", "high")
+
+	cases := []struct {
+		query string
+		want  int
+	}{
+		{"", 3},
+		{"?verdict=false_positive", 1},
+		{"?verdict=review&severity=high", 1},
+		{"?severity=HIGH", 1}, // severidade é case-insensitive
+		{"?verdict=true_positive&severity=low", 0},
+	}
+	for _, tc := range cases {
+		items := decodeList(t, call(t, h, http.MethodGet, "/api/v1/incidents"+tc.query, nil))
+		if len(items) != tc.want {
+			t.Errorf("%q: esperado %d incidente(s), veio %d", tc.query, tc.want, len(items))
+		}
+	}
+
+	items := decodeList(t, call(t, h, http.MethodGet, "/api/v1/incidents?verdict=false_positive", nil))
+	if items[0].Verdict != model.VereditoFalsePositive {
+		t.Fatalf("filtro devolveu veredito %q", items[0].Verdict)
+	}
+}
+
+func TestListPaginatesWithoutRepeating(t *testing.T) {
+	h := newTestRouter()
+	ids := map[string]bool{}
+	for i := range 5 {
+		ids[seed(t, h, i, "true_positive", "critical")] = true
+	}
+
+	page1 := decodeList(t, call(t, h, http.MethodGet, "/api/v1/incidents?limit=2", nil))
+	page2 := decodeList(t, call(t, h, http.MethodGet, "/api/v1/incidents?limit=2&offset=2", nil))
+	page3 := decodeList(t, call(t, h, http.MethodGet, "/api/v1/incidents?limit=2&offset=4", nil))
+	if len(page1) != 2 || len(page2) != 2 || len(page3) != 1 {
+		t.Fatalf("páginas: %d/%d/%d (esperado 2/2/1)", len(page1), len(page2), len(page3))
+	}
+	seen := map[string]bool{}
+	for _, it := range append(append(page1, page2...), page3...) {
+		if seen[it.ID] {
+			t.Fatalf("incidente %s repetido entre páginas", it.ID)
+		}
+		if !ids[it.ID] {
+			t.Fatalf("id inesperado %s na paginação", it.ID)
+		}
+		seen[it.ID] = true
+	}
+	if len(seen) != 5 {
+		t.Fatalf("paginação cobriu %d de 5 incidentes", len(seen))
+	}
+}
+
+func TestListRejectsInvalidQuery(t *testing.T) {
+	h := newTestRouter()
+	for _, query := range []string{
+		"?limit=abc",
+		"?limit=0",
+		"?limit=201",
+		"?offset=-1",
+		"?offset=abc",
+		"?verdict=maybe",
+		"?severity=" + strings.Repeat("x", 41),
+	} {
+		rec := call(t, h, http.MethodGet, "/api/v1/incidents"+query, nil)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%q: esperado 400, veio %d: %s", query, rec.Code, rec.Body.String())
+		}
+	}
+}

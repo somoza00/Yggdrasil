@@ -16,6 +16,42 @@ import (
 // ErrNotFound é retornado quando um incidente não existe.
 var ErrNotFound = errors.New("incidente nao encontrado")
 
+// ListFilter restringe e pagina a listagem de incidentes. O zero value não
+// filtra e não pagina: quem já chamava List sem filtro continua vendo tudo.
+type ListFilter struct {
+	Verdict  model.Veredito // "" = qualquer veredito
+	Severity string         // "" = qualquer severidade (case-insensitive)
+	Limit    int            // <=0 = sem limite
+	Offset   int            // <0 é tratado como 0
+}
+
+// Match informa se o incidente passa nos filtros do ListFilter (ignora
+// Limit/Offset, que são aplicados depois da ordenação).
+func (f ListFilter) Match(it *model.Incident) bool {
+	if f.Verdict != "" && it.Verdict != f.Verdict {
+		return false
+	}
+	return f.Severity == "" || strings.EqualFold(it.Severity, f.Severity)
+}
+
+// Paginate aplica Offset/Limit sobre uma lista já ordenada, sem reordenar.
+// Devolve uma lista nova (nunca um sub-slice do argumento) para quem chama não
+// compartilhar o array com a store.
+func (f ListFilter) Paginate(items []*model.Incident) []*model.Incident {
+	out := make([]*model.Incident, 0, len(items))
+	start := f.Offset
+	if start < 0 {
+		start = 0
+	}
+	for i := start; i < len(items); i++ {
+		if f.Limit > 0 && len(out) >= f.Limit {
+			break
+		}
+		out = append(out, items[i])
+	}
+	return out
+}
+
 // Store define o contrato de persistência. Postgres é a implementação real
 // (ADR-003); Memory serve aos testes de handler.
 type Store interface {
@@ -23,7 +59,10 @@ type Store interface {
 	// para o mesmo EventID, devolve o existente e created=false (idempotente).
 	Create(ctx context.Context, in model.Incident) (it *model.Incident, created bool, err error)
 	Get(ctx context.Context, id string) (*model.Incident, error)
-	List(ctx context.Context) ([]*model.Incident, error)
+	// List devolve os incidentes que casam com o filtro, do mais novo para o
+	// mais antigo (created_at DESC, id como desempate: sem o desempate a
+	// paginação por offset pula/duplica itens empatados no mesmo instante).
+	List(ctx context.Context, f ListFilter) ([]*model.Incident, error)
 	// UpdateVerdict troca o verdict e registra quem mudou. A implementação
 	// Postgres grava uma linha em incident_audit por chamada.
 	UpdateVerdict(ctx context.Context, id string, verdict model.Veredito, changedBy string) (*model.Incident, error)
@@ -85,15 +124,25 @@ func (m *Memory) Get(_ context.Context, id string) (*model.Incident, error) {
 }
 
 // List devolve os incidentes do mais recente para o mais antigo.
-func (m *Memory) List(_ context.Context) ([]*model.Incident, error) {
+func (m *Memory) List(_ context.Context, f ListFilter) ([]*model.Incident, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	out := make([]*model.Incident, 0, len(m.items))
 	for _, it := range m.items {
-		out = append(out, clone(it))
+		if f.Match(&it) {
+			out = append(out, clone(it))
+		}
 	}
-	slices.SortFunc(out, func(a, b *model.Incident) int { return b.CreatedAt.Compare(a.CreatedAt) })
-	return out, nil
+	// Mesma ordem do SQL (`ORDER BY created_at DESC, id`): o id desempata
+	// incidentes criados no mesmo instante, senão a página por offset varia
+	// entre chamadas.
+	slices.SortFunc(out, func(a, b *model.Incident) int {
+		if c := b.CreatedAt.Compare(a.CreatedAt); c != 0 {
+			return c
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	return f.Paginate(out), nil
 }
 
 func (m *Memory) UpdateVerdict(_ context.Context, id string, verdict model.Veredito, changedBy string) (*model.Incident, error) {
